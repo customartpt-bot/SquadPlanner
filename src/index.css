@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Red & White Club Vertical Stripes */
+.bg-striped-vertical {
+  background: repeating-linear-gradient(
+    90deg,
+    #dc2626,         /* Red */
+    #dc2626 24px,    /* Red width */
+    #ffffff 24px,    /* White start */
+    #ffffff 48px     /* White width */
+  );
+}
+
+.bg-striped-vertical-small {
+  background: repeating-linear-gradient(
+    90deg,
+    #dc2626,
+    #dc2626 12px,
+    #ffffff 12px,
+    #ffffff 24px
+  );
+}
+
+/* Red & White Club Diagonal Stripes for Badge/Accents */
+.bg-striped-diagonal {
+  background: repeating-linear-gradient(
+    45deg,
+    #b91c1c,
+    #b91c1c 8px,
+    #f8fafc 8px,
+    #f8fafc 16px
+  );
+}
+
+/* Realistic Tactical Field Background */
+.bg-classic-pitch {
+  background-color: #2d5a27;
+  background-image: repeating-linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.08) 0px,
+    rgba(0, 0, 0, 0.08) 40px,
+    transparent 40px,
+    transparent 80px
+  );
+}
+
+/* Custom scrollbars for the player pool list */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(220, 38, 38, 0.3); /* Transparent Red */
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(220, 38, 38, 0.6);
+}
+
+/* Animations & Transitions */
+@keyframes pulse-subtle {
+  0%, 100% { transform: scale(1); opacity: 0.95; }
+  50% { transform: scale(1.05); opacity: 1; }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2s infinite ease-in-out;
+}

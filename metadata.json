@@ -1,0 +1,6 @@
+{
+  "name": "SquadPlanner",
+  "description": "Quadro tático interativo de futebol para treinadores planearem a composição do plantel, criarem equipas fantasma (shadow teams) e gerirem atletas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

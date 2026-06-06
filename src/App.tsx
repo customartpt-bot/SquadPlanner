@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Player, TacticalPosition, Formation, ShadowTeam } from './types';
-import { FORMATIONS, INITIAL_PLAYERS } from './constants';
+import { FORMATIONS } from './constants';
 import SquadDepthChart from './components/SquadDepthChart';
 import { createClient } from '@supabase/supabase-js';
 
@@ -316,7 +316,7 @@ export default function App() {
   // --- Persistent States ---
   const [players, setPlayers] = useState<Player[]>(() => {
     const saved = localStorage.getItem('MISTER_TACTIC_PLAYERS');
-    return saved ? JSON.parse(saved) : INITIAL_PLAYERS;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [shadowTeams, setShadowTeams] = useState<ShadowTeam[]>(() => {
@@ -383,19 +383,8 @@ export default function App() {
           let finalPlayers = dbPlayers;
           let finalTeams = dbTeams;
 
-          if (dbPlayers && dbPlayers.length > 0) {
+          if (dbPlayers) {
             setPlayers(dbPlayers);
-          } else {
-            // Pre-populate database with default squad
-            try {
-              for (const player of INITIAL_PLAYERS) {
-                await dbService.upsertPlayer(player);
-              }
-              finalPlayers = await dbService.getPlayers();
-              setPlayers(finalPlayers);
-            } catch (err) {
-              console.error("Failed to seed initial players to Supabase:", err);
-            }
           }
 
           if (dbTeams && dbTeams.length > 0) {
@@ -1226,8 +1215,18 @@ export default function App() {
               className="bg-slate-50 text-slate-800 text-xs leading-relaxed p-3.5 rounded-lg border border-slate-200 hover:border-slate-350 focus:border-red-600 focus:outline-none w-full min-h-[90px] resize-y shadow-inner font-sans"
               placeholder="Descreva a estratégia para esta equipa sombra... (ex: movimentos ofensivos, vulnerabilidades na transição defensiva, rotinas de bola parada)"
             />
-            <p className="text-[10px] text-slate-400 font-medium">
-              *Anotações armazenadas automaticamente na memória local do seu navegador para este cenário.
+            <p className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
+              {isSupabaseConfigured ? (
+                <>
+                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full inline-block"></span>
+                  Geração guardada em automático na base de dados (Supabase).
+                </>
+              ) : (
+                <>
+                  <span className="w-1.5 h-1.5 bg-slate-400 rounded-full inline-block"></span>
+                  *Anotações armazenadas automaticamente na memória local do seu navegador.
+                </>
+              )}
             </p>
           </div>
 

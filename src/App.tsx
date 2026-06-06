@@ -362,6 +362,7 @@ export default function App() {
   const [formFoot, setFormFoot] = useState<'Direito' | 'Esquerdo' | 'Ambos'>('Direito');
   const [formRating, setFormRating] = useState<number>(3);
   const [formNotes, setFormNotes] = useState('');
+  const [formStatus, setFormStatus] = useState<Player['status']>('Suplente');
 
   // Filtering variables
   const [selectedYearFilter, setSelectedYearFilter] = useState<string>('ALL');
@@ -509,7 +510,7 @@ export default function App() {
       positionGroup: mappedGroup as any,
       position: formPosition,
       preferredFoot: formFoot,
-      status: 'Suplente', // Default status as UI fields for status are removed
+      status: formStatus,
       rating: formRating,
       notes: formNotes,
       birthDate: formBirthDate || undefined,
@@ -540,6 +541,7 @@ export default function App() {
     setFormPosition('MC');
     setFormNotes('');
     setFormRating(3);
+    setFormStatus('Suplente');
     setShowAddForm(false);
   };
 
@@ -1097,16 +1099,19 @@ export default function App() {
                                 key={alt.id}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setShadowTeams(prev =>
-                                    prev.map(t => {
-                                      if (t.id === currentTeam.id) {
-                                        const nextPlacements = { ...t.placements };
-                                        nextPlacements[pos.id] = alt.id;
-                                        return { ...t, placements: nextPlacements };
-                                      }
-                                      return t;
-                                    })
-                                  );
+                                  const nextPlacements = { ...currentTeam.placements };
+                                  // Assign this player to this spot
+                                  nextPlacements[pos.id] = alt.id;
+                                  
+                                  const updatedTeam = { ...currentTeam, placements: nextPlacements };
+                                  setShadowTeams(prev => prev.map(t => t.id === currentTeam.id ? updatedTeam : t));
+                                  
+                                  if (isSupabaseConfigured) {
+                                    dbService.upsertShadowTeam(updatedTeam).catch(err => {
+                                      console.error("Error saving quick start upgrade on Supabase:", err);
+                                      setAlertMessage(`Falha ao ascender suplente a titular no Supabase: ${err?.message || JSON.stringify(err)}`);
+                                    });
+                                  }
                                 }}
                                 className="truncate leading-normal px-1 py-0.5 rounded bg-white/10 hover:bg-red-600 hover:text-white transition-all text-center cursor-pointer font-bold border border-transparent hover:border-white/20"
                                 title={`Clique para colocar ${alt.name} como titular nesta posição`}
@@ -1420,6 +1425,21 @@ export default function App() {
                   </div>
 
                   <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Disponibilidade / Estatuto Inicial</label>
+                    <select
+                      value={formStatus}
+                      onChange={(e) => setFormStatus(e.target.value as any)}
+                      className="bg-white border border-slate-200 text-slate-800 rounded p-1.5 w-full focus:outline-none focus:border-red-600 cursor-pointer text-xs font-sans"
+                    >
+                      <option value="Titular">Titular (Disponível)</option>
+                      <option value="Suplente">Suplente (Alternativa)</option>
+                      <option value="Reservado">Reservado (Bancada)</option>
+                      <option value="Lesionado">Lesionado (Inativo) 🚑</option>
+                      <option value="Negociação">Em Negociação (Transferência)</option>
+                    </select>
+                  </div>
+
+                  <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Dossiê / Características do Atleta</label>
                     <textarea
                       value={formNotes}
@@ -1575,6 +1595,7 @@ export default function App() {
                             <span className={`text-[8px] font-bold px-1 rounded ${
                               player.status === 'Titular' ? 'bg-emerald-50 text-emerald-700' :
                               player.status === 'Suplente' ? 'bg-slate-100 text-slate-600' :
+                              player.status === 'Reservado' ? 'bg-amber-50 text-amber-600' :
                               player.status === 'Lesionado' ? 'bg-rose-50 text-rose-600' :
                               player.status === 'Negociação' ? 'bg-purple-50 text-purple-650' :
                               'bg-slate-105 text-slate-500'
@@ -1751,9 +1772,11 @@ export default function App() {
                         onChange={(e) => setActivePlayer({ ...activePlayer, status: e.target.value as any })}
                         className="bg-slate-50 text-slate-900 rounded p-1.5 w-full border border-slate-200 focus:outline-none focus:border-red-600 cursor-pointer text-xs"
                       >
-                        <option value="Titular">Disponível</option>
-                        <option value="Suplente">Alternativa</option>
-                        <option value="Lesionado">Lesionado 🚑</option>
+                        <option value="Titular">Titular (Disponível)</option>
+                        <option value="Suplente">Suplente (Alternativa)</option>
+                        <option value="Reservado">Reservado (Bancada)</option>
+                        <option value="Lesionado">Lesionado (Inativo) 🚑</option>
+                        <option value="Negociação">Em Negociação (Transferência)</option>
                       </select>
                     </div>
 

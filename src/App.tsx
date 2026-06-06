@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Player, TacticalPosition, Formation, ShadowTeam } from './types';
 import { FORMATIONS, INITIAL_PLAYERS } from './constants';
 import SquadDepthChart from './components/SquadDepthChart';
+import { isSupabaseConfigured, dbService } from './supabaseClient';
 
 export const FOOTBALL_POSITIONS = [
   { code: 'GR', label: 'Guarda-Redes (GR)', group: 'GK' },
@@ -161,6 +162,72 @@ export default function App() {
   const [editingTeamName, setEditingTeamName] = useState(false);
   const [tempTeamName, setTempTeamName] = useState('');
 
+  // Supabase states
+  const [isDbLoading, setIsDbLoading] = useState(false);
+  const [dbConnectionError, setDbConnectionError] = useState<string | null>(null);
+
+  // Load from Supabase on mount
+  useEffect(() => {
+    if (isSupabaseConfigured) {
+      const loadInitialData = async () => {
+        setIsDbLoading(true);
+        setDbConnectionError(null);
+        try {
+          const dbPlayers = await dbService.getPlayers();
+          const dbTeams = await dbService.getShadowTeams();
+          
+          let finalPlayers = dbPlayers;
+          let finalTeams = dbTeams;
+
+          if (dbPlayers && dbPlayers.length > 0) {
+            setPlayers(dbPlayers);
+          } else {
+            // Pre-populate database with default squad
+            try {
+              for (const player of INITIAL_PLAYERS) {
+                await dbService.upsertPlayer(player);
+              }
+              finalPlayers = await dbService.getPlayers();
+              setPlayers(finalPlayers);
+            } catch (err) {
+              console.error("Failed to seed initial players to Supabase:", err);
+            }
+          }
+
+          if (dbTeams && dbTeams.length > 0) {
+            setShadowTeams(dbTeams);
+            const savedActiveId = localStorage.getItem('MISTER_TACTIC_ACTIVE_TEAM');
+            if (savedActiveId && dbTeams.some(t => t.id === savedActiveId)) {
+              setActiveTeamId(savedActiveId);
+            } else {
+              setActiveTeamId(dbTeams[0].id);
+            }
+          } else {
+            // Pre-populate database with default scenario structures
+            try {
+              for (const team of DEFAULT_TEAMS) {
+                await dbService.upsertShadowTeam(team);
+              }
+              finalTeams = await dbService.getShadowTeams();
+              setShadowTeams(finalTeams);
+              if (finalTeams.length > 0) {
+                setActiveTeamId(finalTeams[0].id);
+              }
+            } catch (err) {
+              console.error("Failed to seed default teams to Supabase:", err);
+            }
+          }
+        } catch (error: any) {
+          console.error("Failed to fetch initial Supabase data:", error);
+          setDbConnectionError(error?.message || "Erro ao carregar dados do Supabase");
+        } finally {
+          setIsDbLoading(false);
+        }
+      };
+      loadInitialData();
+    }
+  }, []);
+
   // Save states to localStorage
   useEffect(() => {
     localStorage.setItem('MISTER_TACTIC_PLAYERS', JSON.stringify(players));
@@ -188,16 +255,21 @@ export default function App() {
   // Handle Team Name Change
   const saveTeamName = () => {
     if (!tempTeamName.trim()) return;
-    setShadowTeams(prev =>
-      prev.map(t => (t.id === currentTeam.id ? { ...t, name: tempTeamName } : t))
-    );
+    setShadowTeams(prev => {
+      const updated = prev.map(t => (t.id === currentTeam.id ? { ...t, name: tempTeamName } : t));
+      const activeObj = updated.find(t => t.id === currentTeam.id);
+      if (isSupabaseConfigured && activeObj) {
+        dbService.upsertShadowTeam(activeObj).catch(err => console.error(err));
+      }
+      return updated;
+    });
     setEditingTeamName(false);
   };
 
   // Switch systems (4-3-3 to 4-4-2 etc.), keeps/clears incompatible slots
   const handleSystemChange = (systemId: string) => {
-    setShadowTeams(prev =>
-      prev.map(t => {
+    setShadowTeams(prev => {
+      const updated = prev.map(t => {
         if (t.id === currentTeam.id) {
           // Keep old placements that still exist in the new system positions
           const nextPlacements: Record<string, string> = {};
@@ -212,8 +284,13 @@ export default function App() {
           return { ...t, systemId, placements: nextPlacements };
         }
         return t;
-      })
-    );
+      });
+      const activeObj = updated.find(t => t.id === currentTeam.id);
+      if (isSupabaseConfigured && activeObj) {
+        dbService.upsertShadowTeam(activeObj).catch(err => console.error(err));
+      }
+      return updated;
+    });
   };
 
   // Add athlete to club pool
@@ -237,6 +314,9 @@ export default function App() {
     };
 
     setPlayers(prev => [newPlayer, ...prev]);
+    if (isSupabaseConfigured) {
+      dbService.upsertPlayer(newPlayer).catch(err => console.error("Error upserting player to Supabase:", err));
+    }
     
     // Reset form
     setFormName('');
@@ -253,6 +333,9 @@ export default function App() {
     setPlayers(prev => prev.map(p => p.id === updatedPlayer.id ? updatedPlayer : p));
     setActivePlayer(updatedPlayer);
     setIsEditingPlayer(false);
+    if (isSupabaseConfigured) {
+      dbService.upsertPlayer(updatedPlayer).catch(err => console.error("Error updating player in Supabase:", err));
+    }
   };
 
   // Set athlete deletion confirm
@@ -274,8 +357,8 @@ export default function App() {
       return;
     }
 
-    setShadowTeams(prev =>
-      prev.map(t => {
+    setShadowTeams(prev => {
+      const updated = prev.map(t => {
         if (t.id === currentTeam.id) {
           const nextPlacements = { ...t.placements };
 
@@ -291,8 +374,13 @@ export default function App() {
           return { ...t, placements: nextPlacements };
         }
         return t;
-      })
-    );
+      });
+      const activeObj = updated.find(t => t.id === currentTeam.id);
+      if (isSupabaseConfigured && activeObj) {
+        dbService.upsertShadowTeam(activeObj).catch(err => console.error(err));
+      }
+      return updated;
+    });
 
     setDraggedPlayerId(null);
   };
@@ -305,8 +393,8 @@ export default function App() {
   const handleManualAssign = (playerId: string) => {
     if (!selectedSpotId) return;
 
-    setShadowTeams(prev =>
-      prev.map(t => {
+    setShadowTeams(prev => {
+      const updated = prev.map(t => {
         if (t.id === currentTeam.id) {
           const nextPlacements = { ...t.placements };
 
@@ -321,24 +409,34 @@ export default function App() {
           return { ...t, placements: nextPlacements };
         }
         return t;
-      })
-    );
+      });
+      const activeObj = updated.find(t => t.id === currentTeam.id);
+      if (isSupabaseConfigured && activeObj) {
+        dbService.upsertShadowTeam(activeObj).catch(err => console.error(err));
+      }
+      return updated;
+    });
 
     setSelectedSpotId(null);
   };
 
   // Remove player from active position
   const handleRemoveFromPosition = (positionId: string) => {
-    setShadowTeams(prev =>
-      prev.map(t => {
+    setShadowTeams(prev => {
+      const updated = prev.map(t => {
         if (t.id === currentTeam.id) {
           const nextPlacements = { ...t.placements };
           delete nextPlacements[positionId];
           return { ...t, placements: nextPlacements };
         }
         return t;
-      })
-    );
+      });
+      const activeObj = updated.find(t => t.id === currentTeam.id);
+      if (isSupabaseConfigured && activeObj) {
+        dbService.upsertShadowTeam(activeObj).catch(err => console.error(err));
+      }
+      return updated;
+    });
   };
 
   // Empty entire active pitch
@@ -358,6 +456,9 @@ export default function App() {
     };
 
     setShadowTeams(prev => [...prev, newTeam]);
+    if (isSupabaseConfigured) {
+      dbService.upsertShadowTeam(newTeam).catch(err => console.error(err));
+    }
     setActiveTeamId(newTeam.id);
     setEditingTeamName(true);
     setTempTeamName(newTeamName);
@@ -374,9 +475,14 @@ export default function App() {
 
   // Save Scenario Notes
   const handleSaveTeamNotes = (noteText: string) => {
-    setShadowTeams(prev =>
-      prev.map(t => (t.id === currentTeam.id ? { ...t, notes: noteText } : t))
-    );
+    setShadowTeams(prev => {
+      const updated = prev.map(t => (t.id === currentTeam.id ? { ...t, notes: noteText } : t));
+      const activeObj = updated.find(t => t.id === currentTeam.id);
+      if (isSupabaseConfigured && activeObj) {
+        dbService.upsertShadowTeam(activeObj).catch(err => console.error(err));
+      }
+      return updated;
+    });
   };
 
   // Filters available roster
@@ -485,6 +591,31 @@ export default function App() {
             <div id="logo-fallback" style={{ display: 'none' }} className="w-10 h-10 bg-red-600 rounded-full flex items-center justify-center text-white font-black shadow-md select-none">SP</div>
           </div>
           <h1 className="text-xl font-black text-slate-900 tracking-tight">SQUAD<span className="text-red-600 italic">PLANNER</span></h1>
+
+          {/* Database connection badge */}
+          {isSupabaseConfigured ? (
+            isDbLoading ? (
+              <span className="flex items-center gap-1 text-[9px] bg-sky-50 text-sky-700 border border-sky-200 px-2 py-0.5 rounded-full font-extrabold animate-pulse uppercase tracking-wider font-mono">
+                <span className="w-1.5 h-1.5 bg-sky-500 rounded-full"></span>
+                A sincronizar...
+              </span>
+            ) : dbConnectionError ? (
+              <span className="flex items-center gap-1 text-[9px] bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded-full font-extrabold uppercase tracking-wider font-mono" title={dbConnectionError}>
+                <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-ping"></span>
+                BD: Sem Acesso
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-[9px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full font-extrabold uppercase tracking-wider font-mono">
+                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                BD: Ligada (Supabase)
+              </span>
+            )
+          ) : (
+            <span className="flex items-center gap-1 text-[9px] bg-slate-100 text-slate-600 border border-slate-250 px-2 py-0.5 rounded-full font-extrabold uppercase tracking-wider font-mono" title="Defina as credenciais VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY para ativar gravação na nuvem">
+              <span className="w-1.5 h-1.5 bg-slate-400 rounded-full"></span>
+              Modo Local (Offline)
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2 z-10">
@@ -924,6 +1055,14 @@ export default function App() {
                     onClick={() => {
                       setPlayers(squadBackup.players);
                       setShadowTeams(squadBackup.shadowTeams);
+                      if (isSupabaseConfigured) {
+                        squadBackup.players.forEach(p => {
+                          dbService.upsertPlayer(p).catch(err => console.error("Error restoring player to Supabase:", err));
+                        });
+                        squadBackup.shadowTeams.forEach(t => {
+                          dbService.upsertShadowTeam(t).catch(err => console.error("Error restoring scenario to Supabase:", err));
+                        });
+                      }
                       setSquadBackup(null);
                     }}
                     className="bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xs py-1.5 px-2.5 rounded-lg flex items-center gap-1 transition-all shadow-sm cursor-pointer hover:scale-[1.02] active:scale-95"
@@ -1663,18 +1802,30 @@ export default function App() {
                 type="button"
                 onClick={() => {
                   const id = playerToDeleteId;
-                  setPlayers(prev => prev.filter(p => p.id !== id));
-                  setShadowTeams(prev =>
-                    prev.map(t => {
-                      const updatedPlacements = { ...t.placements };
-                      Object.keys(updatedPlacements).forEach(key => {
-                        if (updatedPlacements[key] === id) {
-                          delete updatedPlacements[key];
+                  if (id) {
+                    setPlayers(prev => prev.filter(p => p.id !== id));
+                    setShadowTeams(prev => {
+                      const updated = prev.map(t => {
+                        const updatedPlacements = { ...t.placements };
+                        let modified = false;
+                        Object.keys(updatedPlacements).forEach(key => {
+                          if (updatedPlacements[key] === id) {
+                            delete updatedPlacements[key];
+                            modified = true;
+                          }
+                        });
+                        const updatedTeam = { ...t, placements: updatedPlacements };
+                        if (isSupabaseConfigured && modified) {
+                          dbService.upsertShadowTeam(updatedTeam).catch(err => console.error("Error updating placements after delete:", err));
                         }
+                        return updatedTeam;
                       });
-                      return { ...t, placements: updatedPlacements };
-                    })
-                  );
+                      return updated;
+                    });
+                    if (isSupabaseConfigured) {
+                      dbService.deletePlayer(id).catch(err => console.error("Error deleting player from Supabase:", err));
+                    }
+                  }
                   if (activePlayer?.id === id) {
                     setActivePlayer(null);
                     setIsEditingPlayer(false);
@@ -1730,7 +1881,16 @@ export default function App() {
 
                   // Clear current state
                   setPlayers([]);
-                  setShadowTeams(prev => prev.map(t => ({ ...t, placements: {} })));
+                  setShadowTeams(prev => {
+                    const cleaned = prev.map(t => ({ ...t, placements: {} }));
+                    if (isSupabaseConfigured) {
+                      dbService.clearAllPlayers().catch(err => console.error("Error clearing all players on Supabase:", err));
+                      cleaned.forEach(t => {
+                        dbService.upsertShadowTeam(t).catch(err => console.error("Error resetting placements on Supabase:", err));
+                      });
+                    }
+                    return cleaned;
+                  });
                   
                   // Hide editing modals if active
                   setActivePlayer(null);
@@ -1777,9 +1937,14 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  setShadowTeams(prev =>
-                    prev.map(t => (t.id === currentTeam.id ? { ...t, placements: {} } : t))
-                  );
+                  setShadowTeams(prev => {
+                    const updated = prev.map(t => (t.id === currentTeam.id ? { ...t, placements: {} } : t));
+                    const activeObj = updated.find(t => t.id === currentTeam.id);
+                    if (isSupabaseConfigured && activeObj) {
+                      dbService.upsertShadowTeam(activeObj).catch(err => console.error("Error clearing pitch in Supabase:", err));
+                    }
+                    return updated;
+                  });
                   setConfirmClearPitch(false);
                 }}
                 className="bg-red-600 hover:bg-red-750 text-white font-bold py-1.5 px-5 rounded-lg text-xs cursor-pointer transition-all shadow-sm"
@@ -1821,9 +1986,14 @@ export default function App() {
                 type="button"
                 onClick={() => {
                   const id = teamScenarioToDeleteId;
-                  const remaining = shadowTeams.filter(t => t.id !== id);
-                  setShadowTeams(remaining);
-                  setActiveTeamId(remaining[0]?.id || 't1');
+                  if (id) {
+                    const remaining = shadowTeams.filter(t => t.id !== id);
+                    setShadowTeams(remaining);
+                    setActiveTeamId(remaining[0]?.id || 't1');
+                    if (isSupabaseConfigured) {
+                      dbService.deleteShadowTeam(id).catch(err => console.error("Error deleting scenario from Supabase:", err));
+                    }
+                  }
                   setTeamScenarioToDeleteId(null);
                 }}
                 className="bg-red-600 hover:bg-red-750 text-white font-bold py-1.5 px-5 rounded-lg text-xs cursor-pointer transition-all shadow-sm"

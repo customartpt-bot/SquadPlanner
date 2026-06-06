@@ -460,42 +460,38 @@ export default function App() {
   // Handle Team Name Change
   const saveTeamName = () => {
     if (!tempTeamName.trim()) return;
-    setShadowTeams(prev => {
-      const updated = prev.map(t => (t.id === currentTeam.id ? { ...t, name: tempTeamName } : t));
-      const activeObj = updated.find(t => t.id === currentTeam.id);
-      if (isSupabaseConfigured && activeObj) {
-        dbService.upsertShadowTeam(activeObj).catch(err => console.error(err));
-      }
-      return updated;
-    });
+    const updatedTeam = { ...currentTeam, name: tempTeamName };
+    setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
     setEditingTeamName(false);
+
+    if (isSupabaseConfigured) {
+      dbService.upsertShadowTeam(updatedTeam).catch(err => {
+        console.error("Error saving team name in Supabase:", err);
+        setAlertMessage(`Falha ao atualizar o nome do cenário no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
+      });
+    }
   };
 
   // Switch systems (4-3-3 to 4-4-2 etc.), keeps/clears incompatible slots
   const handleSystemChange = (systemId: string) => {
-    setShadowTeams(prev => {
-      const updated = prev.map(t => {
-        if (t.id === currentTeam.id) {
-          // Keep old placements that still exist in the new system positions
-          const nextPlacements: Record<string, string> = {};
-          const targetSystem = FORMATIONS.find(f => f.id === systemId);
-          if (targetSystem) {
-            targetSystem.positions.forEach(pos => {
-              if (t.placements[pos.id]) {
-                nextPlacements[pos.id] = t.placements[pos.id];
-              }
-            });
-          }
-          return { ...t, systemId, placements: nextPlacements };
+    const nextPlacements: Record<string, string> = {};
+    const targetSystem = FORMATIONS.find(f => f.id === systemId);
+    if (targetSystem) {
+      targetSystem.positions.forEach(pos => {
+        if (currentTeam.placements[pos.id]) {
+          nextPlacements[pos.id] = currentTeam.placements[pos.id];
         }
-        return t;
       });
-      const activeObj = updated.find(t => t.id === currentTeam.id);
-      if (isSupabaseConfigured && activeObj) {
-        dbService.upsertShadowTeam(activeObj).catch(err => console.error(err));
-      }
-      return updated;
-    });
+    }
+    const updatedTeam = { ...currentTeam, systemId, placements: nextPlacements };
+    setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
+
+    if (isSupabaseConfigured) {
+      dbService.upsertShadowTeam(updatedTeam).catch(err => {
+        console.error("Error saving system change in Supabase:", err);
+        setAlertMessage(`Falha ao alterar o sistema tático no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
+      });
+    }
   };
 
   // Add athlete to club pool
@@ -576,30 +572,25 @@ export default function App() {
       return;
     }
 
-    setShadowTeams(prev => {
-      const updated = prev.map(t => {
-        if (t.id === currentTeam.id) {
-          const nextPlacements = { ...t.placements };
+    const nextPlacements = { ...currentTeam.placements };
 
-          // OPTIONAL: If player is already mapped elsewhere in the team, remove them from that position (no duplicates)
-          Object.keys(nextPlacements).forEach(k => {
-            if (nextPlacements[k] === draggedPlayerId) {
-              delete nextPlacements[k];
-            }
-          });
-
-          // Insert player into the new spot
-          nextPlacements[positionId] = draggedPlayerId;
-          return { ...t, placements: nextPlacements };
-        }
-        return t;
-      });
-      const activeObj = updated.find(t => t.id === currentTeam.id);
-      if (isSupabaseConfigured && activeObj) {
-        dbService.upsertShadowTeam(activeObj).catch(err => console.error(err));
+    // Clear duplicates of this player
+    Object.keys(nextPlacements).forEach(k => {
+      if (nextPlacements[k] === draggedPlayerId) {
+        delete nextPlacements[k];
       }
-      return updated;
     });
+
+    nextPlacements[positionId] = draggedPlayerId;
+    const updatedTeam = { ...currentTeam, placements: nextPlacements };
+    setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
+
+    if (isSupabaseConfigured) {
+      dbService.upsertShadowTeam(updatedTeam).catch(err => {
+        console.error("Error saving drag-and-drop placements:", err);
+        setAlertMessage(`Falha ao colocar o atleta em campo no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
+      });
+    }
 
     setDraggedPlayerId(null);
   };
@@ -612,50 +603,42 @@ export default function App() {
   const handleManualAssign = (playerId: string) => {
     if (!selectedSpotId) return;
 
-    setShadowTeams(prev => {
-      const updated = prev.map(t => {
-        if (t.id === currentTeam.id) {
-          const nextPlacements = { ...t.placements };
+    const nextPlacements = { ...currentTeam.placements };
 
-          // Clear duplicates of this player
-          Object.keys(nextPlacements).forEach(k => {
-            if (nextPlacements[k] === playerId) {
-              delete nextPlacements[k];
-            }
-          });
-
-          nextPlacements[selectedSpotId] = playerId;
-          return { ...t, placements: nextPlacements };
-        }
-        return t;
-      });
-      const activeObj = updated.find(t => t.id === currentTeam.id);
-      if (isSupabaseConfigured && activeObj) {
-        dbService.upsertShadowTeam(activeObj).catch(err => console.error(err));
+    // Clear duplicates of this player
+    Object.keys(nextPlacements).forEach(k => {
+      if (nextPlacements[k] === playerId) {
+        delete nextPlacements[k];
       }
-      return updated;
     });
+
+    nextPlacements[selectedSpotId] = playerId;
+    const updatedTeam = { ...currentTeam, placements: nextPlacements };
+    setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
+
+    if (isSupabaseConfigured) {
+      dbService.upsertShadowTeam(updatedTeam).catch(err => {
+        console.error("Error saving manual placements:", err);
+        setAlertMessage(`Falha ao atribuir o atleta no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
+      });
+    }
 
     setSelectedSpotId(null);
   };
 
   // Remove player from active position
   const handleRemoveFromPosition = (positionId: string) => {
-    setShadowTeams(prev => {
-      const updated = prev.map(t => {
-        if (t.id === currentTeam.id) {
-          const nextPlacements = { ...t.placements };
-          delete nextPlacements[positionId];
-          return { ...t, placements: nextPlacements };
-        }
-        return t;
+    const nextPlacements = { ...currentTeam.placements };
+    delete nextPlacements[positionId];
+    const updatedTeam = { ...currentTeam, placements: nextPlacements };
+    setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
+
+    if (isSupabaseConfigured) {
+      dbService.upsertShadowTeam(updatedTeam).catch(err => {
+        console.error("Error removing player from position in Supabase:", err);
+        setAlertMessage(`Falha ao retirar o atleta do relvado no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
       });
-      const activeObj = updated.find(t => t.id === currentTeam.id);
-      if (isSupabaseConfigured && activeObj) {
-        dbService.upsertShadowTeam(activeObj).catch(err => console.error(err));
-      }
-      return updated;
-    });
+    }
   };
 
   // Empty entire active pitch
@@ -666,8 +649,9 @@ export default function App() {
   // Create new Shadow Team plan
   const handleCreateNewTeam = () => {
     const newTeamName = `Cenário Tático #${shadowTeams.length + 1}`;
+    const newTeamId = generateUUID();
     const newTeam: ShadowTeam = {
-      id: 'team_' + Date.now(),
+      id: newTeamId,
       name: newTeamName,
       systemId: '4-3-3',
       placements: {},
@@ -675,12 +659,16 @@ export default function App() {
     };
 
     setShadowTeams(prev => [...prev, newTeam]);
-    if (isSupabaseConfigured) {
-      dbService.upsertShadowTeam(newTeam).catch(err => console.error(err));
-    }
-    setActiveTeamId(newTeam.id);
+    setActiveTeamId(newTeamId);
     setEditingTeamName(true);
     setTempTeamName(newTeamName);
+
+    if (isSupabaseConfigured) {
+      dbService.upsertShadowTeam(newTeam).catch(err => {
+        console.error("Error creating new scenario in Supabase:", err);
+        setAlertMessage(`Falha ao criar o cenário tático no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
+      });
+    }
   };
 
   // Delete Active Scenario Team
@@ -694,14 +682,14 @@ export default function App() {
 
   // Save Scenario Notes
   const handleSaveTeamNotes = (noteText: string) => {
-    setShadowTeams(prev => {
-      const updated = prev.map(t => (t.id === currentTeam.id ? { ...t, notes: noteText } : t));
-      const activeObj = updated.find(t => t.id === currentTeam.id);
-      if (isSupabaseConfigured && activeObj) {
-        dbService.upsertShadowTeam(activeObj).catch(err => console.error(err));
-      }
-      return updated;
-    });
+    const updatedTeam = { ...currentTeam, notes: noteText };
+    setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
+
+    if (isSupabaseConfigured) {
+      dbService.upsertShadowTeam(updatedTeam).catch(err => {
+        console.error("Error saving team notes in Supabase:", err);
+      });
+    }
   };
 
   // Filters available roster
@@ -2033,26 +2021,28 @@ export default function App() {
                   const id = playerToDeleteId;
                   if (id) {
                     setPlayers(prev => prev.filter(p => p.id !== id));
-                    setShadowTeams(prev => {
-                      const updated = prev.map(t => {
-                        const updatedPlacements = { ...t.placements };
-                        let modified = false;
-                        Object.keys(updatedPlacements).forEach(key => {
-                          if (updatedPlacements[key] === id) {
-                            delete updatedPlacements[key];
-                            modified = true;
-                          }
-                        });
-                        const updatedTeam = { ...t, placements: updatedPlacements };
-                        if (isSupabaseConfigured && modified) {
-                          dbService.upsertShadowTeam(updatedTeam).catch(err => console.error("Error updating placements after delete:", err));
+                    
+                    const updatedTeams = shadowTeams.map(t => {
+                      const updatedPlacements = { ...t.placements };
+                      let modified = false;
+                      Object.keys(updatedPlacements).forEach(key => {
+                        if (updatedPlacements[key] === id) {
+                          delete updatedPlacements[key];
+                          modified = true;
                         }
-                        return updatedTeam;
                       });
-                      return updated;
+                      return { team: { ...t, placements: updatedPlacements }, modified };
                     });
+
+                    setShadowTeams(updatedTeams.map(item => item.team));
+
                     if (isSupabaseConfigured) {
                       dbService.deletePlayer(id).catch(err => console.error("Error deleting player from Supabase:", err));
+                      updatedTeams.forEach(item => {
+                        if (item.modified) {
+                          dbService.upsertShadowTeam(item.team).catch(err => console.error("Error updating placements after player delete:", err));
+                        }
+                      });
                     }
                   }
                   if (activePlayer?.id === id) {
@@ -2110,16 +2100,15 @@ export default function App() {
 
                   // Clear current state
                   setPlayers([]);
-                  setShadowTeams(prev => {
-                    const cleaned = prev.map(t => ({ ...t, placements: {} }));
-                    if (isSupabaseConfigured) {
-                      dbService.clearAllPlayers().catch(err => console.error("Error clearing all players on Supabase:", err));
-                      cleaned.forEach(t => {
-                        dbService.upsertShadowTeam(t).catch(err => console.error("Error resetting placements on Supabase:", err));
-                      });
-                    }
-                    return cleaned;
-                  });
+                  const cleanedTeams = shadowTeams.map(t => ({ ...t, placements: {} }));
+                  setShadowTeams(cleanedTeams);
+                  
+                  if (isSupabaseConfigured) {
+                    dbService.clearAllPlayers().catch(err => console.error("Error clearing all players on Supabase:", err));
+                    cleanedTeams.forEach(t => {
+                      dbService.upsertShadowTeam(t).catch(err => console.error("Error resetting placements on Supabase:", err));
+                    });
+                  }
                   
                   // Hide editing modals if active
                   setActivePlayer(null);
@@ -2166,14 +2155,15 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  setShadowTeams(prev => {
-                    const updated = prev.map(t => (t.id === currentTeam.id ? { ...t, placements: {} } : t));
-                    const activeObj = updated.find(t => t.id === currentTeam.id);
-                    if (isSupabaseConfigured && activeObj) {
-                      dbService.upsertShadowTeam(activeObj).catch(err => console.error("Error clearing pitch in Supabase:", err));
-                    }
-                    return updated;
-                  });
+                  const updatedTeam = { ...currentTeam, placements: {} };
+                  setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
+                  
+                  if (isSupabaseConfigured) {
+                    dbService.upsertShadowTeam(updatedTeam).catch(err => {
+                      console.error("Error clearing pitch in Supabase:", err);
+                      setAlertMessage(`Falha ao retirar os jogadores do campo no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
+                    });
+                  }
                   setConfirmClearPitch(false);
                 }}
                 className="bg-red-600 hover:bg-red-750 text-white font-bold py-1.5 px-5 rounded-lg text-xs cursor-pointer transition-all shadow-sm"

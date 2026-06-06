@@ -11,6 +11,7 @@ import SquadDepthChart from './components/SquadDepthChart';
 import { createClient } from '@supabase/supabase-js';
 
 // --- Supabase Client & Database Service Integration (Self-Contained) ---
+// Configuração do cliente Supabase usando variáveis de ambiente cliente (VITE_)
 const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || '';
 

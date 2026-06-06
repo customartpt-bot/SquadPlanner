@@ -1,89 +1,204 @@
--- =========================================================================
--- SCHEMA DO PLANTEL DE FUTEBOL E CENÁRIOS TÁTICOS (SUPABASE / POSTGRESQL)
--- =========================================================================
+import { createClient } from '@supabase/supabase-js';
+import { Player, ShadowTeam } from './types';
 
--- Ativar extensão pgcrypto para geração de UUIDs, se ainda não estiver ativa
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || '';
 
--- -------------------------------------------------------------------------
--- 1. TABELA DE ATLETAS (PLAYERS)
--- -------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.players (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(255) NOT NULL,
-    number INTEGER NOT NULL CHECK (number >= 0 AND number <= 99),
-    position_group VARCHAR(10) NOT NULL CHECK (position_group IN ('GK', 'DEF', 'MID', 'ATT')),
-    position VARCHAR(10) DEFAULT 'MC', -- código da posição específica (ex: PL, DE, ED, MC...)
-    preferred_foot VARCHAR(20) NOT NULL CHECK (preferred_foot IN ('Direito', 'Esquerdo', 'Ambos')),
-    status VARCHAR(20) NOT NULL CHECK (status IN ('Titular', 'Suplente', 'Reservado', 'Lesionado', 'Negociação')),
-    rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5) DEFAULT 3,
-    notes TEXT NOT NULL DEFAULT '',
-    birth_date DATE, -- Armazena a data de nascimento (Ano-Mês-Dia)
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+export const isSupabaseConfigured = !!supabaseUrl && !!supabaseAnonKey;
 
--- Habilitar Row Level Security (RLS) para segurança no Supabase
-ALTER TABLE public.players ENABLE ROW LEVEL SECURITY;
+export const supabase = isSupabaseConfigured 
+  ? createClient(supabaseUrl, supabaseAnonKey) 
+  : null;
 
--- Exemplo de Políticas Simplificadas de RLS (Permitir acesso público geral para simplificação de desenvolvimento)
-CREATE POLICY "Permitir leitura pública" ON public.players FOR SELECT USING (true);
-CREATE POLICY "Permitir inserção pública" ON public.players FOR INSERT WITH CHECK (true);
-CREATE POLICY "Permitir atualização pública" ON public.players FOR UPDATE USING (true);
-CREATE POLICY "Permitir deleção pública" ON public.players FOR DELETE USING (true);
+// Helper to ensure all IDs comply with the standard UUID format
+export const ensureUUID = (id: string): string => {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidRegex.test(id)) {
+    return id.toLowerCase();
+  }
+  
+  // Try to parse visual number (e.g., 'p12' -> 12, 'p4' -> 4)
+  const numMatches = id.match(/\d+/);
+  if (numMatches) {
+    const numStr = numMatches[0];
+    const padded = numStr.padStart(12, '0');
+    // If it is a team indicator, use different UUID prefix pattern
+    if (id.startsWith('t') || id.includes('team')) {
+      return `11111111-1111-1111-1111-${padded.slice(-12)}`;
+    }
+    return `00000000-0000-0000-0000-${padded.slice(-12)}`;
+  }
+  
+  // Fallback to safe hash-string converter
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash << 5) - hash + id.charCodeAt(i);
+    hash |= 0;
+  }
+  const absoluteHash = Math.abs(hash).toString().padStart(12, '0');
+  return `22222222-2222-2222-2222-${absoluteHash.slice(-12)}`;
+};
 
+// Helper to convert React Player type to DB/snake_case format
+const mapPlayerToDB = (player: Player) => {
+  return {
+    id: ensureUUID(player.id),
+    name: player.name,
+    number: player.number,
+    position_group: player.positionGroup,
+    position: player.position || 'MC',
+    preferred_foot: player.preferredFoot,
+    status: player.status,
+    rating: player.rating,
+    notes: player.notes || '',
+    birth_date: player.birthDate || null,
+  };
+};
 
--- -------------------------------------------------------------------------
--- 2. TABELA DE CENÁRIOS E EQUIPAS TÁTICAS (SHADOW TEAMS)
--- -------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.shadow_teams (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(255) NOT NULL,
-    system_id VARCHAR(50) NOT NULL, -- ex: '4-3-3', '4-4-2', etc.
-    placements JSONB NOT NULL DEFAULT '{}'::jsonb, -- Dicionário ex: {"GK": "player-uuid", "CB1": "player-uuid"}
-    notes TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+// Helper to convert DB format to React Player type
+const mapDBToPlayer = (dbPlayer: any): Player => {
+  return {
+    id: dbPlayer.id,
+    name: dbPlayer.name,
+    number: Number(dbPlayer.number),
+    positionGroup: dbPlayer.position_group as any,
+    position: dbPlayer.position,
+    preferredFoot: dbPlayer.preferred_foot as any,
+    status: dbPlayer.status as any,
+    rating: Number(dbPlayer.rating),
+    notes: dbPlayer.notes || '',
+    birthDate: dbPlayer.birth_date || undefined,
+  };
+};
 
--- Habilitar Row Level Security (RLS) para a tabela de cenários
-ALTER TABLE public.shadow_teams ENABLE ROW LEVEL SECURITY;
+// Helper to convert React ShadowTeam type to DB/snake_case format
+const mapTeamToDB = (team: ShadowTeam) => {
+  const mappedPlacements: Record<string, string> = {};
+  if (team.placements) {
+    Object.entries(team.placements).forEach(([posId, plId]) => {
+      if (plId) {
+        mappedPlacements[posId] = ensureUUID(plId);
+      }
+    });
+  }
 
--- Políticas de RLS para shadow_teams
-CREATE POLICY "Permitir leitura pública" ON public.shadow_teams FOR SELECT USING (true);
-CREATE POLICY "Permitir inserção pública" ON public.shadow_teams FOR INSERT WITH CHECK (true);
-CREATE POLICY "Permitir atualização pública" ON public.shadow_teams FOR UPDATE USING (true);
-CREATE POLICY "Permitir deleção pública" ON public.shadow_teams FOR DELETE USING (true);
+  return {
+    id: ensureUUID(team.id),
+    name: team.name,
+    system_id: team.systemId,
+    placements: mappedPlacements,
+    notes: team.notes || '',
+  };
+};
 
+// Helper to convert DB format to React ShadowTeam type
+const mapDBToTeam = (dbTeam: any): ShadowTeam => {
+  return {
+    id: dbTeam.id,
+    name: dbTeam.name,
+    systemId: dbTeam.system_id,
+    placements: dbTeam.placements || {},
+    notes: dbTeam.notes || '',
+  };
+};
 
--- -------------------------------------------------------------------------
--- 3. FUNÇÃO E TRIGGER PARA ATUALIZAÇÃO AUTOMÁTICA DE TIMESTAMP (updated_at)
--- -------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.handle_update_timestamp()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = now();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+export const dbService = {
+  // --- Players standard endpoints ---
+  async getPlayers(): Promise<Player[]> {
+    if (!supabase) throw new Error('Supabase is not configured.');
+    const { data, error } = await supabase
+      .from('players')
+      .select('*')
+      .order('created_at', { ascending: false });
 
--- Trigger para tabela public.players
-CREATE TRIGGER trigger_update_players_timestamp
-    BEFORE UPDATE ON public.players
-    FOR EACH ROW
-    EXECUTE FUNCTION public.handle_update_timestamp();
+    if (error) {
+      console.error('Error fetching players:', error);
+      throw error;
+    }
+    return (data || []).map(mapDBToPlayer);
+  },
 
--- Trigger para tabela public.shadow_teams
-CREATE TRIGGER trigger_update_shadow_teams_timestamp
-    BEFORE UPDATE ON public.shadow_teams
-    FOR EACH ROW
-    EXECUTE FUNCTION public.handle_update_timestamp();
+  async upsertPlayer(player: Player): Promise<Player> {
+    if (!supabase) throw new Error('Supabase is not configured.');
+    const dbData = mapPlayerToDB(player);
+    const { data, error } = await supabase
+      .from('players')
+      .upsert(dbData)
+      .select();
 
+    if (error) {
+      console.error('Error upserting player:', error);
+      throw error;
+    }
+    return mapDBToPlayer(data[0]);
+  },
 
--- -------------------------------------------------------------------------
--- 4. DADOS INICIAIS EXEMPLO (OPCIONAL - INSERIR SE DESEJAR TESTAR)
--- -------------------------------------------------------------------------
--- INSERT INTO public.players (name, status, rating, number, preferred_foot, position_group, position, birth_date, notes)
--- VALUES 
--- ('Diogo Costa', 'Titular', 5, 99, 'Direito', 'GK', 'GR', '1999-09-19', 'Excelente no um contra um e reposição rápida de bola.'),
--- ('Jaby', 'Titular', 5, 4, 'Ambos', 'DEF', 'DC', '2008-10-31', 'Excelente na antecipação e velocidade de recuperação.');
+  async deletePlayer(id: string): Promise<void> {
+    if (!supabase) throw new Error('Supabase is not configured.');
+    const { error } = await supabase
+      .from('players')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error deleting player:', error);
+      throw error;
+    }
+  },
+
+  async clearAllPlayers(): Promise<void> {
+    if (!supabase) throw new Error('Supabase is not configured.');
+    const { error } = await supabase
+      .from('players')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete everything
+
+    if (error) {
+      console.error('Error clearing all players:', error);
+      throw error;
+    }
+  },
+
+  // --- Shadow Teams (Tactical scenarios) endpoints ---
+  async getShadowTeams(): Promise<ShadowTeam[]> {
+    if (!supabase) throw new Error('Supabase is not configured.');
+    const { data, error } = await supabase
+      .from('shadow_teams')
+      .select('*')
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('Error fetching shadow teams:', error);
+      throw error;
+    }
+    return (data || []).map(mapDBToTeam);
+  },
+
+  async upsertShadowTeam(team: ShadowTeam): Promise<ShadowTeam> {
+    if (!supabase) throw new Error('Supabase is not configured.');
+    const dbData = mapTeamToDB(team);
+    const { data, error } = await supabase
+      .from('shadow_teams')
+      .upsert(dbData)
+      .select();
+
+    if (error) {
+      console.error('Error upserting shadow team:', error);
+      throw error;
+    }
+    return mapDBToTeam(data[0]);
+  },
+
+  async deleteShadowTeam(id: string): Promise<void> {
+    if (!supabase) throw new Error('Supabase is not configured.');
+    const { error } = await supabase
+      .from('shadow_teams')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error deleting shadow team:', error);
+      throw error;
+    }
+  }
+};

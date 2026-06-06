@@ -10,6 +10,18 @@ import { FORMATIONS } from './constants';
 import SquadDepthChart from './components/SquadDepthChart';
 import { createClient } from '@supabase/supabase-js';
 
+// Helper to generate a valid/genuine UUID v4 string directly on client-side
+export const generateUUID = (): string => {
+  if (typeof window !== 'undefined' && window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
+
 // --- Supabase Client & Database Service Integration (Self-Contained) ---
 // Configuração do cliente Supabase usando variáveis de ambiente cliente (VITE_)
 const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL || '';
@@ -492,9 +504,10 @@ export default function App() {
     if (!formName.trim()) return;
 
     const mappedGroup = FOOTBALL_POSITIONS.find(p => p.code === formPosition)?.group || 'MID';
+    const newPlayerId = generateUUID();
 
     const newPlayer: Player = {
-      id: 'custom_' + Date.now(),
+      id: newPlayerId,
       name: formName,
       number: formNumber || 1,
       positionGroup: mappedGroup as any,
@@ -506,9 +519,22 @@ export default function App() {
       birthDate: formBirthDate || undefined,
     };
 
+    // Adiciona localmente de imediato
     setPlayers(prev => [newPlayer, ...prev]);
+    
     if (isSupabaseConfigured) {
-      dbService.upsertPlayer(newPlayer).catch(err => console.error("Error upserting player to Supabase:", err));
+      dbService.upsertPlayer(newPlayer)
+        .then((savedPlayer) => {
+          // Garante a substituição pelo objeto persistido oficial do Supabase
+          setPlayers(prev => prev.map(p => p.id === newPlayerId ? savedPlayer : p));
+        })
+        .catch(err => {
+          console.error("Error upserting player to Supabase:", err);
+          // Revoga o atleta temporário caso falhe de verdade, preservando a coerência com a BD
+          setPlayers(prev => prev.filter(p => p.id !== newPlayerId));
+          // Expõe o erro de SQL/Políticas RLS visualmente na UI para o Mister
+          setAlertMessage(`Falha ao gravar atleta na Base de Dados (Supabase). Detalhes técnicos: ${err?.message || JSON.stringify(err)}`);
+        });
     }
     
     // Reset form

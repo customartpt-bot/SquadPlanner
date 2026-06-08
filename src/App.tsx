@@ -1659,12 +1659,12 @@ export default function App() {
                 {players.length > 0 && (
                   <button
                     type="button"
-                    onClick={() => setConfirmClearSquad(true)}
-                    className="bg-slate-200 hover:bg-red-50 border border-slate-200 hover:border-red-200 text-slate-600 hover:text-red-600 font-extrabold text-xs py-1.5 px-2.5 rounded-lg flex items-center gap-1 transition-all shadow-xs cursor-pointer hover:scale-[1.02] active:scale-95"
-                    title="Remover todo o plantel de uma vez"
+                    onClick={() => setConfirmClearPitch(true)}
+                    className="bg-slate-200 hover:bg-amber-50 border border-slate-200 hover:border-amber-200 text-slate-600 hover:text-amber-800 font-extrabold text-xs py-1.5 px-2.5 rounded-lg flex items-center gap-1 transition-all shadow-xs cursor-pointer hover:scale-[1.02] active:scale-95"
+                    title="Limpar o campo (retirar todos os jogadores colocados do terreno de jogo neste plano ativo)"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    <span>Remover todo o Plantel</span>
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>Limpar todo o Campo</span>
                   </button>
                 )}
                 <button
@@ -2728,72 +2728,6 @@ export default function App() {
                 className="bg-red-600 hover:bg-red-750 text-white font-bold py-1.5 px-5 rounded-lg text-xs cursor-pointer transition-all shadow-sm"
               >
                 Confirmar Exclusão
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Custom Confirmation Dialog for Deleting All Squad Members */}
-      {confirmClearSquad && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in" id="clear-squad-modal">
-          <div className="bg-white border-2 border-red-600 rounded-xl max-w-md w-full p-6 shadow-2xl relative text-slate-850">
-            <button 
-              type="button" 
-              onClick={() => setConfirmClearSquad(false)}
-              className="absolute top-3 right-3 text-slate-400 hover:text-slate-600 cursor-pointer border-none bg-transparent"
-            >
-              <X className="h-5 w-5" />
-            </button>
-            <div className="flex items-center gap-3 text-red-600 mb-4">
-              <AlertTriangle className="h-6 w-6 stroke-[2.5]" />
-              <h3 className="text-base font-black uppercase tracking-tight">Dispensar Todo o Plantel</h3>
-            </div>
-            <p className="text-xs text-slate-600 leading-relaxed font-semibold mb-5">
-              Tem a certeza de que deseja <strong className="text-red-600">remover todos os {players.length} atletas</strong> do plantel de uma só vez?
-              Isso também irá limpar todas as escalações nos cenários táticos atuais. 
-              <br/><br/>
-              <span className="text-amber-600 font-bold">💡 Nota: Poderá desfazer esta ação imediatamente através do botão "Desfazer" na barra lateral.</span>
-            </p>
-            <div className="flex justify-end gap-2.5">
-              <button
-                type="button"
-                onClick={() => setConfirmClearSquad(false)}
-                className="bg-slate-200 hover:bg-slate-300 text-slate-800 py-1.5 px-4 rounded-lg font-bold text-xs cursor-pointer transition-all"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  // Back up current players & shadowTeams
-                  setSquadBackup({
-                    players: [...players],
-                    shadowTeams: JSON.parse(JSON.stringify(shadowTeams))
-                  });
-
-                  // Clear current state
-                  setPlayers([]);
-                  const cleanedTeams = shadowTeams.map(t => ({ ...t, placements: {} }));
-                  setShadowTeams(cleanedTeams);
-                  
-                  if (isSupabaseConfigured) {
-                    dbService.clearAllPlayers().catch(err => console.error("Error clearing all players on Supabase:", err));
-                    cleanedTeams.forEach(t => {
-                      dbService.upsertShadowTeam(t).catch(err => console.error("Error resetting placements on Supabase:", err));
-                    });
-                  }
-                  
-                  // Hide editing modals if active
-                  setActivePlayer(null);
-                  setIsEditingPlayer(false);
-                  
-                  // Close modal
-                  setConfirmClearSquad(false);
-                }}
-                className="bg-red-600 hover:bg-red-750 text-white font-bold py-1.5 px-5 rounded-lg text-xs cursor-pointer transition-all shadow-sm"
-              >
-                Confirmar Dispensa Geral
               </button>
             </div>
           </div>

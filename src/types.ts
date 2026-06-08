@@ -32,9 +32,9 @@ export interface Formation {
   positions: TacticalPosition[];
 }
 
-export interface ShadowTeam {
+export interface Scenario {
   id: string;
-  name: string; // e.g., "Equipa Principal - A", "Equipa B - Jovem", "Equipa Alvo (Mercado)"
+  name: string;
   systemId: string; // e.g. "4-3-3"
   // maps TacticalPosition.id -> Player.id
   placements: Record<string, string>;

@@ -216,36 +216,6 @@ export default function SquadDepthChart({
           </div>
         </div>
 
-        {/* Recommendations / Scouting Advice Section */}
-        <div className="border-t border-gray-150 pt-4" id="scouting-advice">
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2 flex items-center gap-1">
-            <Info className="h-3.5 w-3.5 text-red-600" />
-            Conselhos do Coordenador Técnico
-          </h4>
-          
-          {recommendations.length > 0 ? (
-            <ul className="space-y-2">
-              {recommendations.map((rec, idx) => (
-                <li
-                  key={idx}
-                  className="text-xs text-gray-600 pl-3 border-l-2 border-red-500 leading-relaxed"
-                >
-                  {rec}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-xs text-emerald-600 font-medium">
-              ✨ Fantástico! O seu plantel está perfeitamente equilibrado e com boa profundidade para rotação contínua em todas as posições táticas.
-            </p>
-          )}
-
-          {injuredCount > 0 && (
-            <p className="text-[11px] text-rose-600 mt-3 font-medium bg-rose-50 border border-rose-100 px-2 py-1 rounded">
-              ⚠️ Alerta Clínico: Tem {injuredCount} player(s) indisponível(eis) devido a lesão neste momento.
-            </p>
-          )}
-        </div>
       </div>
     </div>
   );

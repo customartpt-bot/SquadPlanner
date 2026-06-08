@@ -412,6 +412,18 @@ export default function App() {
     return saved ? JSON.parse(saved) : DEFAULT_TEAMS;
   });
 
+  const [scoutTeam, setScoutTeam] = useState<ShadowTeam>(() => {
+    const saved = localStorage.getItem('MISTER_TACTIC_SCOUT_TEAM');
+    return saved ? JSON.parse(saved) : {
+      id: 'scout-mode-team',
+      name: 'Equipa de Observação (Scout)',
+      systemId: '4-3-3',
+      placements: {},
+      notes: '',
+      isReferencedScenario: true
+    };
+  });
+
   const [activeTeamId, setActiveTeamId] = useState<string>(() => {
     const saved = localStorage.getItem('MISTER_TACTIC_ACTIVE_TEAM');
     if (saved) return saved;
@@ -588,8 +600,10 @@ export default function App() {
   }, [referencedPlacements]);
 
   // Find active Shadow Team Scenario
-  const currentTeam = shadowTeams.find((team) => team.id === activeTeamId) || shadowTeams[0] || DEFAULT_TEAMS[0];
-  const activeFormation = FORMATIONS.find((f) => f.id === currentTeam.systemId) || FORMATIONS[0];
+  const squadTeam = shadowTeams.find((team) => team.id === activeTeamId) || shadowTeams[0] || DEFAULT_TEAMS[0];
+  const currentTeam = squadTeam;
+  const activeTeam = activeTab === 'squad' ? squadTeam : scoutTeam;
+  const activeFormation = FORMATIONS.find((f) => f.id === activeTeam.systemId) || FORMATIONS[0];
 
   // Sync temp team name when active team changes
   useEffect(() => {
@@ -610,6 +624,32 @@ export default function App() {
         console.error("Error saving team name in Supabase:", err);
         setAlertMessage(`Falha ao atualizar o nome do cenário no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
       });
+    }
+  };
+
+  // Handle Save Team
+  const handleSaveTeam = () => {
+    if (activeTab === 'squad') {
+      setAlertMessage("Equipa titular já está guardada.");
+      setTimeout(() => setAlertMessage(null), 3000);
+    } else {
+      // Scout Mode
+      const updatedScoutTeam = { ...scoutTeam, placements: referencedPlacements };
+      setScoutTeam(updatedScoutTeam);
+      
+      if (isSupabaseConfigured) {
+        dbService.upsertShadowTeam(updatedScoutTeam).then(() => {
+          setAlertMessage("Equipa de observação gravada com sucesso!");
+          setTimeout(() => setAlertMessage(null), 3000);
+        }).catch(err => {
+          console.error("Error saving scout team:", err);
+          setAlertMessage(`Falha ao gravar na Base de Dados. Detalhes: ${err?.message}`);
+        });
+      } else {
+        localStorage.setItem('MISTER_TACTIC_SCOUT_TEAM', JSON.stringify(updatedScoutTeam));
+        setAlertMessage("Equipa de observação gravada localmente com sucesso!");
+        setTimeout(() => setAlertMessage(null), 3000);
+      }
     }
   };
 
@@ -1354,6 +1394,14 @@ export default function App() {
             </div>
             
             <div className="flex items-center gap-2">
+              <button
+                onClick={handleSaveTeam}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-600 transition-colors text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-sm"
+                title="Gravar 11"
+              >
+                <Save className="h-3.5 w-3.5" />
+                Gravar
+              </button>
               <button
                 onClick={handleClearPitch}
                 className="bg-white hover:bg-red-50 text-slate-700 hover:text-red-600 border border-slate-200 hover:border-red-200 transition-colors text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer shadow-sm"

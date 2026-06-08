@@ -39,4 +39,5 @@ export interface ShadowTeam {
   // maps TacticalPosition.id -> Player.id
   placements: Record<string, string>;
   notes: string;
+  isReferencedScenario?: boolean;
 }

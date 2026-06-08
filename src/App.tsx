@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Player, TacticalPosition, Formation, ShadowTeam } from './types';
+import { Player, TacticalPosition, Formation, Scenario } from './types';
 import { FORMATIONS, INITIAL_PLAYERS } from './constants';
 import SquadDepthChart from './components/SquadDepthChart';
 import { createClient } from '@supabase/supabase-js';
@@ -160,11 +160,11 @@ const mapDBToPlayer = (dbPlayer: any): Player => {
   };
 };
 
-// Helper to convert React ShadowTeam type to DB/snake_case format
-const mapTeamToDB = (team: ShadowTeam) => {
+// Helper to convert React Scenario type to DB/snake_case format
+const mapScenarioToDB = (scenario: Scenario) => {
   const mappedPlacements: Record<string, string> = {};
-  if (team.placements) {
-    Object.entries(team.placements).forEach(([posId, plId]) => {
+  if (scenario.placements) {
+    Object.entries(scenario.placements).forEach(([posId, plId]) => {
       if (plId) {
         mappedPlacements[posId] = ensureUUID(plId);
       }
@@ -172,24 +172,22 @@ const mapTeamToDB = (team: ShadowTeam) => {
   }
 
   return {
-    id: ensureUUID(team.id),
-    name: team.name,
-    system_id: team.systemId,
+    id: ensureUUID(scenario.id),
+    name: scenario.name,
+    system_id: scenario.systemId,
     placements: mappedPlacements,
-    notes: team.notes || '',
-    is_referenced_scenario: team.isReferencedScenario || false,
+    notes: scenario.notes || '',
   };
 };
 
-// Helper to convert DB format to React ShadowTeam type
-const mapDBToTeam = (dbTeam: any): ShadowTeam => {
+// Helper to convert DB format to React Scenario type
+const mapDBToScenario = (dbScenario: any): Scenario => {
   return {
-    id: dbTeam.id,
-    name: dbTeam.name,
-    systemId: dbTeam.system_id,
-    placements: dbTeam.placements || {},
-    notes: dbTeam.notes || '',
-    isReferencedScenario: dbTeam.is_referenced_scenario || false,
+    id: dbScenario.id,
+    name: dbScenario.name,
+    systemId: dbScenario.system_id,
+    placements: dbScenario.placements || {},
+    notes: dbScenario.notes || '',
   };
 };
 
@@ -250,45 +248,88 @@ export const dbService = {
     }
   },
 
-  // --- Shadow Teams (Tactical scenarios) endpoints ---
-  async getShadowTeams(): Promise<ShadowTeam[]> {
+  // --- Main Team Scenario endpoints ---
+  async getMainTeamScenarios(): Promise<Scenario[]> {
     if (!supabase) throw new Error('Supabase is not configured.');
     const { data, error } = await supabase
-      .from('shadow_teams')
+      .from('main_team_scenarios')
       .select('*')
       .order('created_at', { ascending: true });
 
     if (error) {
-      console.error('Error fetching shadow teams:', error);
+      console.error('Error fetching main team scenarios:', error);
       throw error;
     }
-    return (data || []).map(mapDBToTeam);
+    return (data || []).map(mapDBToScenario);
   },
 
-  async upsertShadowTeam(team: ShadowTeam): Promise<ShadowTeam> {
+  async upsertMainTeamScenario(scenario: Scenario): Promise<Scenario> {
     if (!supabase) throw new Error('Supabase is not configured.');
-    const dbData = mapTeamToDB(team);
+    const dbData = mapScenarioToDB(scenario);
     const { data, error } = await supabase
-      .from('shadow_teams')
+      .from('main_team_scenarios')
       .upsert(dbData)
       .select();
 
     if (error) {
-      console.error('Error upserting shadow team:', error);
+      console.error('Error upserting main team scenario:', error);
       throw error;
     }
-    return mapDBToTeam(data[0]);
+    return mapDBToScenario(data[0]);
   },
 
-  async deleteShadowTeam(id: string): Promise<void> {
+  async deleteMainTeamScenario(id: string): Promise<void> {
     if (!supabase) throw new Error('Supabase is not configured.');
     const { error } = await supabase
-      .from('shadow_teams')
+      .from('main_team_scenarios')
       .delete()
       .eq('id', id);
 
     if (error) {
-      console.error('Error deleting shadow team:', error);
+      console.error('Error deleting main team scenario:', error);
+      throw error;
+    }
+  },
+
+  // --- Referenced Team Scenario endpoints ---
+  async getReferencedTeamScenarios(): Promise<Scenario[]> {
+    if (!supabase) throw new Error('Supabase is not configured.');
+    const { data, error } = await supabase
+      .from('referenced_team_scenarios')
+      .select('*')
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('Error fetching referenced team scenarios:', error);
+      throw error;
+    }
+    return (data || []).map(mapDBToScenario);
+  },
+
+  async upsertReferencedTeamScenario(scenario: Scenario): Promise<Scenario> {
+    if (!supabase) throw new Error('Supabase is not configured.');
+    const dbData = mapScenarioToDB(scenario);
+    const { data, error } = await supabase
+      .from('referenced_team_scenarios')
+      .upsert(dbData)
+      .select();
+
+    if (error) {
+      console.error('Error upserting referenced team scenario:', error);
+      throw error;
+    }
+    return mapDBToScenario(data[0]);
+  },
+
+  async deleteReferencedTeamScenario(id: string): Promise<void> {
+    if (!supabase) throw new Error('Supabase is not configured.');
+    const { error } = await supabase
+      .from('referenced_team_scenarios')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error deleting referenced team scenario:', error);
       throw error;
     }
   }
@@ -359,7 +400,7 @@ import {
   Camera
 } from 'lucide-react';
 
-const DEFAULT_TEAMS: ShadowTeam[] = [
+const DEFAULT_TEAMS: Scenario[] = [
   {
     id: 't1',
     name: 'Equipa Favorita (A)',
@@ -407,22 +448,8 @@ export default function App() {
     return saved ? JSON.parse(saved) : INITIAL_PLAYERS;
   });
 
-  const [shadowTeams, setShadowTeams] = useState<ShadowTeam[]>(() => {
-    const saved = localStorage.getItem('MISTER_TACTIC_TEAMS');
-    return saved ? JSON.parse(saved) : DEFAULT_TEAMS;
-  });
-
-  const [scoutTeam, setScoutTeam] = useState<ShadowTeam>(() => {
-    const saved = localStorage.getItem('MISTER_TACTIC_SCOUT_TEAM');
-    return saved ? JSON.parse(saved) : {
-      id: 'scout-mode-team',
-      name: 'Equipa de Observação (Scout)',
-      systemId: '4-3-3',
-      placements: {},
-      notes: '',
-      isReferencedScenario: true
-    };
-  });
+  const [mainScenarios, setMainScenarios] = useState<Scenario[]>([]);
+  const [refScenarios, setRefScenarios] = useState<Scenario[]>([]);
 
   const [activeTeamId, setActiveTeamId] = useState<string>(() => {
     const saved = localStorage.getItem('MISTER_TACTIC_ACTIVE_TEAM');
@@ -460,20 +487,6 @@ export default function App() {
 
   // Interactive workspaces
   const [activeTab, setActiveTab] = useState<'squad' | 'scout'>('squad');
-  const [referencedPlacements, setReferencedPlacements] = useState<Record<string, string>>(() => {
-    try {
-      const saved = localStorage.getItem('MISTER_TACTIC_REFERENCED_PLACEMENTS');
-      if (saved && saved !== 'undefined' && saved !== 'null') {
-        const parsed = JSON.parse(saved);
-        if (parsed && typeof parsed === 'object') {
-          return parsed;
-        }
-      }
-    } catch (e) {
-      console.error("Error parsing referenced placements:", e);
-    }
-    return {};
-  });
 
   // Filtering variables
   const [selectedYearFilter, setSelectedYearFilter] = useState<string>('ALL');
@@ -482,7 +495,7 @@ export default function App() {
   const [playerToDeleteId, setPlayerToDeleteId] = useState<string | null>(null);
   const [confirmClearPitch, setConfirmClearPitch] = useState(false);
   const [confirmClearSquad, setConfirmClearSquad] = useState(false);
-  const [squadBackup, setSquadBackup] = useState<{ players: Player[], shadowTeams: ShadowTeam[] } | null>(null);
+  const [squadBackup, setSquadBackup] = useState<{ players: Player[], mainScenarios: Scenario[], refScenarios: Scenario[] } | null>(null);
   const [teamScenarioToDeleteId, setTeamScenarioToDeleteId] = useState<string | null>(null);
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
 
@@ -502,10 +515,12 @@ export default function App() {
         setDbConnectionError(null);
         try {
           const dbPlayers = await dbService.getPlayers();
-          const dbTeams = await dbService.getShadowTeams();
+          const dbMainScenarios = await dbService.getMainTeamScenarios();
+          const dbRefScenarios = await dbService.getReferencedTeamScenarios();
           
           let finalPlayers = dbPlayers;
-          let finalTeams = dbTeams;
+          let finalMainScenarios = dbMainScenarios;
+          let finalRefScenarios = dbRefScenarios;
 
           if (dbPlayers && dbPlayers.length > 0) {
             setPlayers(dbPlayers);
@@ -532,27 +547,49 @@ export default function App() {
             }
           }
 
-          if (dbTeams && dbTeams.length > 0) {
-            setShadowTeams(dbTeams);
+          // Handle Main Scenarios
+          if (dbMainScenarios && dbMainScenarios.length > 0) {
+            setMainScenarios(dbMainScenarios);
             const savedActiveId = localStorage.getItem('MISTER_TACTIC_ACTIVE_TEAM');
-            if (savedActiveId && dbTeams.some(t => t.id === savedActiveId)) {
+            if (savedActiveId && dbMainScenarios.some(t => t.id === savedActiveId)) {
               setActiveTeamId(savedActiveId);
             } else {
-              setActiveTeamId(dbTeams[0].id);
+              setActiveTeamId(dbMainScenarios[0].id);
             }
           } else {
-            // Pre-populate database with default scenario structures
+            // Seed base scenarios if database is fresh
             try {
               for (const team of DEFAULT_TEAMS) {
-                await dbService.upsertShadowTeam(team);
+                await dbService.upsertMainTeamScenario(team);
               }
-              finalTeams = await dbService.getShadowTeams();
-              setShadowTeams(finalTeams);
-              if (finalTeams.length > 0) {
-                setActiveTeamId(finalTeams[0].id);
+              const seededScenarios = await dbService.getMainTeamScenarios();
+              setMainScenarios(seededScenarios);
+              if (seededScenarios.length > 0) {
+                setActiveTeamId(seededScenarios[0].id);
               }
             } catch (err) {
-              console.error("Failed to seed default teams to Supabase:", err);
+              console.error("Failed to seed main team scenarios:", err);
+            }
+          }
+
+          // Handle Referenced Scenarios
+          if (dbRefScenarios && dbRefScenarios.length > 0) {
+            setRefScenarios(dbRefScenarios);
+          } else {
+            // Seed default scout scenario
+            try {
+              const scoutSeed: Scenario = {
+                id: generateUUID(),
+                name: 'Equipa de Observação (Scout)',
+                systemId: '4-3-3',
+                placements: {},
+                notes: '',
+              };
+              await dbService.upsertReferencedTeamScenario(scoutSeed);
+              const seededRefScenarios = await dbService.getReferencedTeamScenarios();
+              setRefScenarios(seededRefScenarios);
+            } catch (err) {
+              console.error("Failed to seed referenced team scenarios:", err);
             }
           }
         } catch (error: any) {
@@ -566,23 +603,7 @@ export default function App() {
     }
   }, []);
 
-  // Save states to localStorage safely
-  useEffect(() => {
-    try {
-      localStorage.setItem('MISTER_TACTIC_PLAYERS', JSON.stringify(players));
-    } catch (e) {
-      console.warn("Local storage players quota exceeded:", e);
-    }
-  }, [players]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('MISTER_TACTIC_TEAMS', JSON.stringify(shadowTeams));
-    } catch (e) {
-      console.warn("Local storage teams quota exceeded:", e);
-    }
-  }, [shadowTeams]);
-
+  // Save states to Supabase (localStorage only for activeTeamId)
   useEffect(() => {
     try {
       localStorage.setItem('MISTER_TACTIC_ACTIVE_TEAM', activeTeamId);
@@ -591,66 +612,68 @@ export default function App() {
     }
   }, [activeTeamId]);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('MISTER_TACTIC_REFERENCED_PLACEMENTS', JSON.stringify(referencedPlacements));
-    } catch (e) {
-      console.warn("Local storage referenced placements quota exceeded:", e);
-    }
-  }, [referencedPlacements]);
+  // Find active Main Scenario
+  const squadTeam = mainScenarios.find((team) => team.id === activeTeamId) || mainScenarios[0] || DEFAULT_TEAMS[0];
+  
+  // Official source of truth for Scout placements
+  const scoutTeam: Scenario = refScenarios[0] || {
+    id: generateUUID(),
+    name: 'Equipa de Observação (Scout)',
+    systemId: '4-3-3',
+    placements: {},
+    notes: '',
+  };
 
-  // Find active Shadow Team Scenario
-  const squadTeam = shadowTeams.find((team) => team.id === activeTeamId) || shadowTeams[0] || DEFAULT_TEAMS[0];
-  const currentTeam = squadTeam;
   const activeTeam = activeTab === 'squad' ? squadTeam : scoutTeam;
+  const currentTeam = activeTeam;
   const activeFormation = FORMATIONS.find((f) => f.id === activeTeam.systemId) || FORMATIONS[0];
+  const referencedPlacements = scoutTeam.placements || {};
 
   // Sync temp team name when active team changes
   useEffect(() => {
-    if (currentTeam) {
-      setTempTeamName(currentTeam.name);
+    if (squadTeam) {
+      setTempTeamName(squadTeam.name);
     }
-  }, [currentTeam?.id]);
+  }, [squadTeam?.id]);
 
-  // Handle Team Name Change
-  const saveTeamName = () => {
-    if (!tempTeamName.trim()) return;
-    const updatedTeam = { ...currentTeam, name: tempTeamName };
-    setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
-    setEditingTeamName(false);
+  // Unified updater for the active team (Supabase + LocalState)
+  const updateActiveTeamPlacements = (
+    nextPlacements: Record<string, string>,
+    options?: { systemId?: string; notes?: string }
+  ) => {
+    const isSquad = activeTab === 'squad';
+    const scenarios = isSquad ? mainScenarios : refScenarios;
+    const setScenarios = isSquad ? setMainScenarios : setRefScenarios;
+    
+    const baseTeam = scenarios.find(t => t.id === activeTeamId) || scenarios[0] || (isSquad ? DEFAULT_TEAMS[0] : scoutTeam);
+
+    const updatedTeam: Scenario = {
+      ...baseTeam,
+      systemId: options?.systemId || baseTeam.systemId,
+      notes: options?.notes !== undefined ? options.notes : baseTeam.notes,
+      placements: nextPlacements,
+    };
+
+    setScenarios(prev => prev.map(t => t.id === updatedTeam.id ? updatedTeam : t));
 
     if (isSupabaseConfigured) {
-      dbService.upsertShadowTeam(updatedTeam).catch(err => {
-        console.error("Error saving team name in Supabase:", err);
-        setAlertMessage(`Falha ao atualizar o nome do cenário no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
-      });
+      const upsertFn = isSquad ? dbService.upsertMainTeamScenario : dbService.upsertReferencedTeamScenario;
+      upsertFn(updatedTeam)
+        .then((savedTeam) => {
+          setScenarios(curr => curr.map(t => t.id === savedTeam.id ? savedTeam : t));
+        })
+        .catch(err => {
+          console.error("Error saving team placements in Supabase:", err);
+          setAlertMessage(`Falha ao gravar equipa no Supabase.`);
+        });
     }
   };
 
   // Handle Save Team
   const handleSaveTeam = () => {
-    if (activeTab === 'squad') {
-      setAlertMessage("Equipa titular já está guardada.");
-      setTimeout(() => setAlertMessage(null), 3000);
-    } else {
-      // Scout Mode
-      const updatedScoutTeam = { ...scoutTeam, placements: referencedPlacements };
-      setScoutTeam(updatedScoutTeam);
-      
-      if (isSupabaseConfigured) {
-        dbService.upsertShadowTeam(updatedScoutTeam).then(() => {
-          setAlertMessage("Equipa de observação gravada com sucesso!");
-          setTimeout(() => setAlertMessage(null), 3000);
-        }).catch(err => {
-          console.error("Error saving scout team:", err);
-          setAlertMessage(`Falha ao gravar na Base de Dados. Detalhes: ${err?.message}`);
-        });
-      } else {
-        localStorage.setItem('MISTER_TACTIC_SCOUT_TEAM', JSON.stringify(updatedScoutTeam));
-        setAlertMessage("Equipa de observação gravada localmente com sucesso!");
-        setTimeout(() => setAlertMessage(null), 3000);
-      }
-    }
+    updateActiveTeamPlacements(activeTeam.placements || {});
+    setAlertMessage(activeTab === 'squad' ? "Equipa titular guardada com sucesso." : "Equipa de observação gravada com sucesso!");
+    setTimeout(() => setAlertMessage(null), 3000);
   };
 
   // Switch systems (4-3-3 to 4-4-2 etc.), keeps/clears incompatible slots
@@ -659,20 +682,13 @@ export default function App() {
     const targetSystem = FORMATIONS.find(f => f.id === systemId);
     if (targetSystem) {
       targetSystem.positions.forEach(pos => {
-        if (currentTeam.placements[pos.id]) {
-          nextPlacements[pos.id] = currentTeam.placements[pos.id];
+        if (activeTeam.placements?.[pos.id]) {
+          nextPlacements[pos.id] = activeTeam.placements[pos.id];
         }
       });
     }
-    const updatedTeam = { ...currentTeam, systemId, placements: nextPlacements };
-    setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
 
-    if (isSupabaseConfigured) {
-      dbService.upsertShadowTeam(updatedTeam).catch(err => {
-        console.error("Error saving system change in Supabase:", err);
-        setAlertMessage(`Falha ao alterar o sistema tático no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
-      });
-    }
+    updateActiveTeamPlacements(nextPlacements, { systemId });
   };
 
   // Helper to handle local profile photo upload and convert to base64
@@ -781,7 +797,8 @@ export default function App() {
     // Clear placement in standard or referenced board to avoid ghost entries
     if (nextReferenced) {
       // Was a standard player, moving to referenced. Remove from standard team placements
-      const updatedTeams = shadowTeams.map(t => {
+      const allCombinedScenarios = [...mainScenarios, ...refScenarios];
+      const updatedTeams = allCombinedScenarios.map(t => {
         const updatedPlacements = { ...t.placements };
         let modified = false;
         Object.keys(updatedPlacements).forEach(key => {
@@ -792,11 +809,13 @@ export default function App() {
         });
         return { team: { ...t, placements: updatedPlacements }, modified };
       });
-      setShadowTeams(updatedTeams.map(item => item.team));
+      setMainScenarios(updatedTeams.filter(t => !t.isReferencedScenario));
+      setRefScenarios(updatedTeams.filter(t => t.isReferencedScenario));
       if (isSupabaseConfigured) {
         updatedTeams.forEach(item => {
           if (item.modified) {
-            dbService.upsertShadowTeam(item.team).catch(err => console.error("Error updating placements after player move:", err));
+            if (item.team.isReferencedScenario) dbService.upsertReferencedTeamScenario(item.team).catch(err => console.error("Error...", err));
+            else dbService.upsertMainTeamScenario(item.team).catch(err => console.error("Error...", err));
           }
         });
       }
@@ -811,7 +830,7 @@ export default function App() {
         }
       });
       if (refModified) {
-        setReferencedPlacements(nextReferencedPlacements);
+        updateActiveTeamPlacements(nextReferencedPlacements);
       }
     }
 
@@ -842,12 +861,12 @@ export default function App() {
 
     if (activeTab === 'squad') {
       // Check if player is already in this position
-      if (currentTeam.placements[positionId] === draggedPlayerId) {
+      if (squadTeam.placements[positionId] === draggedPlayerId) {
         setDraggedPlayerId(null);
         return;
       }
 
-      const nextPlacements = { ...currentTeam.placements };
+      const nextPlacements = { ...squadTeam.placements };
 
       // Clear duplicates of this player
       Object.keys(nextPlacements).forEach(k => {
@@ -857,14 +876,11 @@ export default function App() {
       });
 
       nextPlacements[positionId] = draggedPlayerId;
-      const updatedTeam = { ...currentTeam, placements: nextPlacements };
-      setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
+      const updatedTeam = { ...squadTeam, placements: nextPlacements };
+      setShadowTeams(prev => prev.map(t => (t.id === squadTeam.id ? updatedTeam : t)));
 
       if (isSupabaseConfigured) {
-        dbService.upsertShadowTeam(updatedTeam).catch(err => {
-          console.error("Error saving drag-and-drop placements:", err);
-          setAlertMessage(`Falha ao colocar o atleta em campo no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
-        });
+        dbService.upsertShadowTeam(updatedTeam).catch(console.error);
       }
     } else {
       // Scout Mode
@@ -883,19 +899,12 @@ export default function App() {
       });
 
       nextReferencedPlacements[positionId] = draggedPlayerId;
-      setReferencedPlacements(nextReferencedPlacements);
+      updateActiveTeamPlacements(nextReferencedPlacements);
     }
 
     setDraggedPlayerId(null);
   };
 
-  // Synchronize referencedPlacements with the 'scout-mode-team' from shadowTeams
-  useEffect(() => {
-    const scoutTeam = shadowTeams.find(t => t.id === 'scout-mode-team');
-    if (scoutTeam && scoutTeam.placements) {
-        setReferencedPlacements(scoutTeam.placements);
-    }
-  }, [shadowTeams]);
 
   // Non-drag selection placement helper
   const handleSelectSpotToAssign = (spotId: string) => {
@@ -906,7 +915,7 @@ export default function App() {
     if (!selectedSpotId) return;
 
     if (activeTab === 'squad') {
-      const nextPlacements = { ...currentTeam.placements };
+      const nextPlacements = { ...squadTeam.placements };
 
       // Clear duplicates of this player
       Object.keys(nextPlacements).forEach(k => {
@@ -916,14 +925,11 @@ export default function App() {
       });
 
       nextPlacements[selectedSpotId] = playerId;
-      const updatedTeam = { ...currentTeam, placements: nextPlacements };
-      setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
+      const updatedTeam = { ...squadTeam, placements: nextPlacements };
+      setShadowTeams(prev => prev.map(t => (t.id === squadTeam.id ? updatedTeam : t)));
 
       if (isSupabaseConfigured) {
-        dbService.upsertShadowTeam(updatedTeam).catch(err => {
-          console.error("Error saving manual placements:", err);
-          setAlertMessage(`Falha ao atribuir o atleta no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
-        });
+        dbService.upsertShadowTeam(updatedTeam).catch(console.error);
       }
     } else {
       // Scout Mode
@@ -937,28 +943,7 @@ export default function App() {
       });
 
       nextReferencedPlacements[selectedSpotId] = playerId;
-      setReferencedPlacements(nextReferencedPlacements);
-      
-      // Update shadowTeams state to stay in sync
-      const scoutTeamEntry = shadowTeams.find(t => t.id === 'scout-mode-team');
-      const updatedScoutTeam: ShadowTeam = {
-        ...scoutTeamEntry,
-        id: 'scout-mode-team',
-        name: 'Scout Mode Placements',
-        systemId: scoutTeamEntry?.systemId || '4-3-3',
-        placements: nextReferencedPlacements,
-        notes: scoutTeamEntry?.notes || '',
-        isReferencedScenario: true
-      };
-      setShadowTeams(prev => {
-        const filtered = prev.filter(t => t.id !== 'scout-mode-team');
-        return [...filtered, updatedScoutTeam];
-      });
-
-      // Persist to DB under special ID 'scout-mode-team'
-      if (isSupabaseConfigured) {
-        dbService.upsertShadowTeam(updatedScoutTeam).catch(console.error);
-      }
+      updateActiveTeamPlacements(nextReferencedPlacements);
     }
 
     setSelectedSpotId(null);
@@ -967,43 +952,19 @@ export default function App() {
   // Remove player from active position
   const handleRemoveFromPosition = (positionId: string) => {
     if (activeTab === 'squad') {
-      const nextPlacements = { ...currentTeam.placements };
+      const nextPlacements = { ...squadTeam.placements };
       delete nextPlacements[positionId];
-      const updatedTeam = { ...currentTeam, placements: nextPlacements };
-      setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
+      const updatedTeam = { ...squadTeam, placements: nextPlacements };
+      setShadowTeams(prev => prev.map(t => (t.id === squadTeam.id ? updatedTeam : t)));
 
       if (isSupabaseConfigured) {
-        dbService.upsertShadowTeam(updatedTeam).catch(err => {
-          console.error("Error removing player from position in Supabase:", err);
-          setAlertMessage(`Falha ao retirar o atleta do relvado no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
-        });
+        dbService.upsertShadowTeam(updatedTeam).catch(console.error);
       }
     } else {
       // Scout Mode
       const nextReferencedPlacements = { ...referencedPlacements };
       delete nextReferencedPlacements[positionId];
-      setReferencedPlacements(nextReferencedPlacements);
-      
-      // Update shadowTeams state to stay in sync
-      const scoutTeamEntry = shadowTeams.find(t => t.id === 'scout-mode-team');
-      const updatedScoutTeam: ShadowTeam = {
-        ...scoutTeamEntry,
-        id: 'scout-mode-team',
-        name: 'Scout Mode Placements',
-        systemId: scoutTeamEntry?.systemId || '4-3-3',
-        placements: nextReferencedPlacements,
-        notes: scoutTeamEntry?.notes || '',
-        isReferencedScenario: true
-      };
-      setShadowTeams(prev => {
-        const filtered = prev.filter(t => t.id !== 'scout-mode-team');
-        return [...filtered, updatedScoutTeam];
-      });
-
-      // Persist to DB under special ID 'scout-mode-team'
-      if (isSupabaseConfigured) {
-        dbService.upsertShadowTeam(updatedScoutTeam).catch(console.error);
-      }
+      updateActiveTeamPlacements(nextReferencedPlacements);
     }
   };
 
@@ -1014,7 +975,8 @@ export default function App() {
 
   // Create new Shadow Team plan
   const handleCreateNewTeam = () => {
-    const newTeamName = `Cenário Tático #${shadowTeams.length + 1}`;
+    const allScenarios = [...mainScenarios, ...refScenarios];
+    const newTeamName = `Cenário Tático #${allScenarios.length + 1}`;
     const newTeamId = generateUUID();
     const newTeam: ShadowTeam = {
       id: newTeamId,
@@ -1039,23 +1001,16 @@ export default function App() {
 
   // Delete Active Scenario Team
   const handleDeleteActiveTeam = () => {
-    if (shadowTeams.length <= 1) {
+    if (mainScenarios.length + refScenarios.length <= 1) {
       setAlertMessage('Precisa de manter pelo menos um cenário no seu planeador.');
       return;
     }
-    setTeamScenarioToDeleteId(currentTeam.id);
+    setTeamScenarioToDeleteId(squadTeam.id);
   };
 
   // Save Scenario Notes
   const handleSaveTeamNotes = (noteText: string) => {
-    const updatedTeam = { ...currentTeam, notes: noteText };
-    setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
-
-    if (isSupabaseConfigured) {
-      dbService.upsertShadowTeam(updatedTeam).catch(err => {
-        console.error("Error saving team notes in Supabase:", err);
-      });
-    }
+    updateActiveTeamPlacements(activeTeam.placements || {}, { notes: noteText });
   };
 
   // Filters available roster
@@ -1315,7 +1270,7 @@ export default function App() {
               }}
               className="px-3 py-1 bg-white shadow-sm rounded-md text-xs font-bold text-slate-800 border-none outline-none focus:ring-1 focus:ring-red-600 cursor-pointer appearance-none flex-1 sm:flex-initial max-w-[130px] sm:max-w-[none]"
             >
-              {shadowTeams.map((team) => (
+              { (activeTab === 'squad' ? mainScenarios : refScenarios).map((team) => (
                 <option key={team.id} value={team.id}>
                   {team.name}
                 </option>
@@ -1582,7 +1537,7 @@ export default function App() {
                                     // Scout Mode
                                     const nextReferencedPlacements = { ...referencedPlacements };
                                     nextReferencedPlacements[pos.id] = alt.id;
-                                    setReferencedPlacements(nextReferencedPlacements);
+                                    updateActiveTeamPlacements(nextReferencedPlacements);
                                   }
                                 }}
                                 className="truncate leading-normal px-1 py-0.5 rounded bg-white/10 hover:bg-red-600 hover:text-white transition-all text-center cursor-pointer font-bold border border-transparent hover:border-white/20"
@@ -1850,13 +1805,17 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       setPlayers(squadBackup.players);
-                      setShadowTeams(squadBackup.shadowTeams);
+                      setMainScenarios(squadBackup.mainScenarios);
+                      setRefScenarios(squadBackup.refScenarios);
                       if (isSupabaseConfigured) {
                         squadBackup.players.forEach(p => {
                           dbService.upsertPlayer(p).catch(err => console.error("Error restoring player to Supabase:", err));
                         });
-                        squadBackup.shadowTeams.forEach(t => {
-                          dbService.upsertShadowTeam(t).catch(err => console.error("Error restoring scenario to Supabase:", err));
+                        squadBackup.mainScenarios.forEach(t => {
+                          dbService.upsertMainTeamScenario(t).catch(err => console.error("Error restoring main scenario to Supabase:", err));
+                        });
+                        squadBackup.refScenarios.forEach(t => {
+                          dbService.upsertReferencedTeamScenario(t).catch(err => console.error("Error restoring reference scenario to Supabase:", err));
                         });
                       }
                       setSquadBackup(null);
@@ -2895,7 +2854,8 @@ export default function App() {
                   if (id) {
                     setPlayers(prev => prev.filter(p => p.id !== id));
                     
-                    const updatedTeams = shadowTeams.map(t => {
+    const allCombinedScenarios = [...mainScenarios, ...refScenarios];
+    const updatedTeams = allCombinedScenarios.map(t => {
                       const updatedPlacements = { ...t.placements };
                       let modified = false;
                       Object.keys(updatedPlacements).forEach(key => {
@@ -2919,7 +2879,7 @@ export default function App() {
                       }
                     });
                     if (refModified) {
-                      setReferencedPlacements(nextReferencedPlacements);
+                      updateActiveTeamPlacements(nextReferencedPlacements);
                     }
 
                     if (isSupabaseConfigured) {
@@ -2975,19 +2935,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  if (activeTab === 'squad') {
-                    const updatedTeam = { ...currentTeam, placements: {} };
-                    setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
-                    
-                    if (isSupabaseConfigured) {
-                      dbService.upsertShadowTeam(updatedTeam).catch(err => {
-                        console.error("Error clearing pitch in Supabase:", err);
-                        setAlertMessage(`Falha ao retirar os jogadores do campo no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
-                      });
-                    }
-                  } else {
-                    setReferencedPlacements({});
-                  }
+                  updateActiveTeamPlacements({});
                   setConfirmClearPitch(false);
                 }}
                 className="bg-red-600 hover:bg-red-750 text-white font-bold py-1.5 px-5 rounded-lg text-xs cursor-pointer transition-all shadow-sm"
@@ -3015,7 +2963,7 @@ export default function App() {
               <h3 className="text-base font-black uppercase tracking-tight">Apagar Cenário Tático</h3>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed font-semibold mb-5">
-              Tem a certeza absoluta que deseja apagar permanentemente o cenário tático <strong className="text-slate-950">"{shadowTeams.find(t => t.id === teamScenarioToDeleteId)?.name}"</strong>? Esta ação é irreversível.
+              Tem a certeza absoluta que deseja apagar permanentemente o cenário tático <strong className="text-slate-950">"{[...mainScenarios, ...refScenarios].find(t => t.id === teamScenarioToDeleteId)?.name}"</strong>? Esta ação é irreversível.
             </p>
             <div className="flex justify-end gap-2.5">
               <button
@@ -3030,7 +2978,7 @@ export default function App() {
                 onClick={() => {
                   const id = teamScenarioToDeleteId;
                   if (id) {
-                    const remaining = shadowTeams.filter(t => t.id !== id);
+                    const remaining = [...mainScenarios, ...refScenarios].filter(t => t.id !== id);
                     setShadowTeams(remaining);
                     setActiveTeamId(remaining[0]?.id || 't1');
                     if (isSupabaseConfigured) {

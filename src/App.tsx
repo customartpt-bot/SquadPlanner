@@ -899,17 +899,25 @@ export default function App() {
       nextReferencedPlacements[selectedSpotId] = playerId;
       setReferencedPlacements(nextReferencedPlacements);
       
+      // Update shadowTeams state to stay in sync
+      const scoutTeamEntry = shadowTeams.find(t => t.id === 'scout-mode-team');
+      const updatedScoutTeam: ShadowTeam = {
+        ...scoutTeamEntry,
+        id: 'scout-mode-team',
+        name: 'Scout Mode Placements',
+        systemId: scoutTeamEntry?.systemId || '4-3-3',
+        placements: nextReferencedPlacements,
+        notes: scoutTeamEntry?.notes || '',
+        isReferencedScenario: true
+      };
+      setShadowTeams(prev => {
+        const filtered = prev.filter(t => t.id !== 'scout-mode-team');
+        return [...filtered, updatedScoutTeam];
+      });
+
       // Persist to DB under special ID 'scout-mode-team'
       if (isSupabaseConfigured) {
-        const scoutTeam: ShadowTeam = {
-          id: 'scout-mode-team',
-          name: 'Scout Mode Placements',
-          systemId: '4-3-3',
-          placements: nextReferencedPlacements,
-          notes: '',
-          isReferencedScenario: true
-        };
-        dbService.upsertShadowTeam(scoutTeam).catch(console.error);
+        dbService.upsertShadowTeam(updatedScoutTeam).catch(console.error);
       }
     }
 
@@ -936,17 +944,25 @@ export default function App() {
       delete nextReferencedPlacements[positionId];
       setReferencedPlacements(nextReferencedPlacements);
       
+      // Update shadowTeams state to stay in sync
+      const scoutTeamEntry = shadowTeams.find(t => t.id === 'scout-mode-team');
+      const updatedScoutTeam: ShadowTeam = {
+        ...scoutTeamEntry,
+        id: 'scout-mode-team',
+        name: 'Scout Mode Placements',
+        systemId: scoutTeamEntry?.systemId || '4-3-3',
+        placements: nextReferencedPlacements,
+        notes: scoutTeamEntry?.notes || '',
+        isReferencedScenario: true
+      };
+      setShadowTeams(prev => {
+        const filtered = prev.filter(t => t.id !== 'scout-mode-team');
+        return [...filtered, updatedScoutTeam];
+      });
+
       // Persist to DB under special ID 'scout-mode-team'
       if (isSupabaseConfigured) {
-        const scoutTeam: ShadowTeam = {
-          id: 'scout-mode-team',
-          name: 'Scout Mode Placements',
-          systemId: '4-3-3',
-          placements: nextReferencedPlacements,
-          notes: '',
-          isReferencedScenario: true
-        };
-        dbService.upsertShadowTeam(scoutTeam).catch(console.error);
+        dbService.upsertShadowTeam(updatedScoutTeam).catch(console.error);
       }
     }
   };

@@ -639,7 +639,8 @@ export default function App() {
   // Unified updater for the active team (Supabase + LocalState)
   const updateActiveTeamPlacements = (
     nextPlacements: Record<string, string>,
-    options?: { systemId?: string; notes?: string }
+    options?: { systemId?: string; notes?: string },
+    persist: boolean = true
   ) => {
     const isSquad = activeTab === 'squad';
     const scenarios = isSquad ? mainScenarios : refScenarios;
@@ -656,7 +657,7 @@ export default function App() {
 
     setScenarios(prev => prev.map(t => t.id === updatedTeam.id ? updatedTeam : t));
 
-    if (isSupabaseConfigured) {
+    if (persist && isSupabaseConfigured) {
       const upsertFn = isSquad ? dbService.upsertMainTeamScenario : dbService.upsertReferencedTeamScenario;
       upsertFn(updatedTeam)
         .then((savedTeam) => {
@@ -704,15 +705,83 @@ export default function App() {
   const handleSystemChange = (systemId: string) => {
     const nextPlacements: Record<string, string> = {};
     const targetSystem = FORMATIONS.find(f => f.id === systemId);
-    if (targetSystem) {
-      targetSystem.positions.forEach(pos => {
-        if (activeTeam.placements?.[pos.id]) {
-          nextPlacements[pos.id] = activeTeam.placements?.[pos.id];
-        }
-      });
-    }
+    if (!targetSystem) return;
 
-    updateActiveTeamPlacements(nextPlacements, { systemId });
+    const oldPlacements = { ...(activeTeam.placements || {}) };
+    const targetPositionIds = targetSystem.positions.map(p => p.id);
+    const usedTargetIds = new Set<string>();
+
+    // Semantic Mapping for position migration
+    const POSITION_SEMANTICS: Record<string, string[]> = {
+      'GR': [],
+      'DE': ['ALA_E'],
+      'ALA_E': ['DE'],
+      'CE': ['CC', 'CD'],
+      'CD': ['CC', 'CE'],
+      'CC': ['CE', 'CD'],
+      'DD': ['ALA_D'],
+      'ALA_D': ['DD'],
+      'MDF': ['MDF_E', 'MDF_D', 'MC', 'CC'],
+      'MDF_E': ['MDF', 'MDF_D', 'MC_E', 'MCE'],
+      'MDF_D': ['MDF', 'MDF_E', 'MC_D', 'MCD'],
+      'MC_E': ['MCE', 'MC', 'MDF_E'],
+      'MC_D': ['MCD', 'MC', 'MDF_D'],
+      'MC': ['MC_E', 'MC_D', 'MCE', 'MCD', 'MDF'],
+      'MCE': ['MC_E', 'MC', 'MDF_E'],
+      'MCD': ['MC_D', 'MC', 'MDF_D'],
+      'MD_E': ['EE', 'ALA_E', 'ME'],
+      'MD_D': ['ED', 'ALA_D', 'MD'],
+      'ME': ['MD_E', 'EE', 'ALA_E'],
+      'MD': ['MD_D', 'ED', 'ALA_D'],
+      'MO': ['MCO_C', 'MCO_E', 'MCO_D', 'MC'],
+      'MCO_C': ['MO', 'MC'],
+      'MCO_E': ['EE', 'MO'],
+      'MCO_D': ['ED', 'MO'],
+      'EE': ['MD_E', 'PL_E', 'MCO_E', 'ME'],
+      'ED': ['MD_D', 'PL_D', 'MCO_D', 'MD'],
+      'PL': ['PL_E', 'PL_D'],
+      'PL_E': ['PL', 'PL_D', 'EE'],
+      'PL_D': ['PL', 'PL_E', 'ED'],
+    };
+
+    // 1. Precise matches first
+    targetPositionIds.forEach(id => {
+      if (oldPlacements[id]) {
+        nextPlacements[id] = oldPlacements[id];
+        delete oldPlacements[id];
+        usedTargetIds.add(id);
+      }
+    });
+
+    // 2. Semantic migration for orphans
+    Object.keys(oldPlacements).forEach(oldId => {
+      if (!oldPlacements[oldId]) return;
+      const playerId = oldPlacements[oldId];
+      const alternatives = POSITION_SEMANTICS[oldId] || [];
+      const bestAlt = alternatives.find(altId => targetPositionIds.includes(altId) && !usedTargetIds.has(altId));
+
+      if (bestAlt) {
+        nextPlacements[bestAlt] = playerId;
+        usedTargetIds.add(bestAlt);
+        delete oldPlacements[oldId];
+      }
+    });
+
+    // 3. Last resort: just fill remaining empty slots with whatever players are still floating
+    const remainingEmptySpots = targetPositionIds.filter(id => !usedTargetIds.has(id));
+    const floatingPlayers = Object.values(oldPlacements) as string[];
+    
+    floatingPlayers.forEach((playerId, index) => {
+      if (remainingEmptySpots[index]) {
+        nextPlacements[remainingEmptySpots[index]] = playerId;
+        usedTargetIds.add(remainingEmptySpots[index]);
+      }
+    });
+
+    updateActiveTeamPlacements(nextPlacements, { systemId }, false);
+    
+    setAlertMessage(`Tática alterada para ${targetSystem.id}. Não se esqueça de "Gravar" para persistir as alterações.`);
+    setTimeout(() => setAlertMessage(null), 4000);
   };
 
   // Helper to handle local profile photo upload and convert to base64

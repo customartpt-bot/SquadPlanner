@@ -669,6 +669,30 @@ export default function App() {
     }
   };
 
+  const saveTeamName = () => {
+    const isSquad = activeTab === 'squad';
+    const scenarios = isSquad ? mainScenarios : refScenarios;
+    const setScenarios = isSquad ? setMainScenarios : setRefScenarios;
+    
+    // Find the current team
+    const current = (scenarios.find(t => t.id === activeTeamId) || scenarios[0]);
+    if (!current) return;
+    
+    const updatedTeam: Scenario = {
+      ...current,
+      name: tempTeamName
+    };
+
+    setScenarios(prev => prev.map(t => t.id === updatedTeam.id ? updatedTeam : t));
+    
+    if (isSupabaseConfigured) {
+        const upsertFn = isSquad ? dbService.upsertMainTeamScenario : dbService.upsertReferencedTeamScenario;
+        upsertFn(updatedTeam).catch(console.error);
+    }
+    
+    setEditingTeamName(false);
+  };
+
   // Handle Save Team
   const handleSaveTeam = () => {
     updateActiveTeamPlacements(activeTeam.placements || {});
@@ -877,10 +901,10 @@ export default function App() {
 
       nextPlacements[positionId] = draggedPlayerId;
       const updatedTeam = { ...squadTeam, placements: nextPlacements };
-      setShadowTeams(prev => prev.map(t => (t.id === squadTeam.id ? updatedTeam : t)));
+      setMainScenarios(prev => prev.map(t => (t.id === squadTeam.id ? updatedTeam : t)));
 
       if (isSupabaseConfigured) {
-        dbService.upsertShadowTeam(updatedTeam).catch(console.error);
+        dbService.upsertMainTeamScenario(updatedTeam).catch(console.error);
       }
     } else {
       // Scout Mode
@@ -926,10 +950,10 @@ export default function App() {
 
       nextPlacements[selectedSpotId] = playerId;
       const updatedTeam = { ...squadTeam, placements: nextPlacements };
-      setShadowTeams(prev => prev.map(t => (t.id === squadTeam.id ? updatedTeam : t)));
+      setMainScenarios(prev => prev.map(t => (t.id === squadTeam.id ? updatedTeam : t)));
 
       if (isSupabaseConfigured) {
-        dbService.upsertShadowTeam(updatedTeam).catch(console.error);
+        dbService.upsertMainTeamScenario(updatedTeam).catch(console.error);
       }
     } else {
       // Scout Mode
@@ -955,10 +979,10 @@ export default function App() {
       const nextPlacements = { ...squadTeam.placements };
       delete nextPlacements[positionId];
       const updatedTeam = { ...squadTeam, placements: nextPlacements };
-      setShadowTeams(prev => prev.map(t => (t.id === squadTeam.id ? updatedTeam : t)));
+      setMainScenarios(prev => prev.map(t => (t.id === squadTeam.id ? updatedTeam : t)));
 
       if (isSupabaseConfigured) {
-        dbService.upsertShadowTeam(updatedTeam).catch(console.error);
+        dbService.upsertMainTeamScenario(updatedTeam).catch(console.error);
       }
     } else {
       // Scout Mode
@@ -986,13 +1010,13 @@ export default function App() {
       notes: 'Escreva anotações importantes sobre este cenário tático ou análise fantasma aqui.'
     };
 
-    setShadowTeams(prev => [...prev, newTeam]);
+    setMainScenarios(prev => [...prev, newTeam]);
     setActiveTeamId(newTeamId);
     setEditingTeamName(true);
     setTempTeamName(newTeamName);
 
     if (isSupabaseConfigured) {
-      dbService.upsertShadowTeam(newTeam).catch(err => {
+      dbService.upsertMainTeamScenario(newTeam).catch(err => {
         console.error("Error creating new scenario in Supabase:", err);
         setAlertMessage(`Falha ao criar o cenário tático no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
       });
@@ -1525,10 +1549,12 @@ export default function App() {
                                     nextPlacements[pos.id] = alt.id;
                                     
                                     const updatedTeam = { ...currentTeam, placements: nextPlacements };
-                                    setShadowTeams(prev => prev.map(t => t.id === currentTeam.id ? updatedTeam : t));
+                                    // Use appropriate updater based on active tab
+                                    const setScenarios = activeTab === 'squad' ? setMainScenarios : setRefScenarios;
+                                    setScenarios(prev => prev.map(t => t.id === currentTeam.id ? updatedTeam : t));
                                     
                                     if (isSupabaseConfigured) {
-                                      dbService.upsertShadowTeam(updatedTeam).catch(err => {
+                                      dbService.upsertMainTeamScenario(updatedTeam).catch(err => {
                                         console.error("Error saving quick start upgrade on Supabase:", err);
                                         setAlertMessage(`Falha ao ascender suplente a titular no Supabase: ${err?.message || JSON.stringify(err)}`);
                                       });
@@ -2867,7 +2893,9 @@ export default function App() {
                       return { team: { ...t, placements: updatedPlacements }, modified };
                     });
 
-                    setShadowTeams(updatedTeams.map(item => item.team));
+                    const teams = updatedTeams.map(item => item.team);
+                    setMainScenarios(teams.filter(t => !t.isReferencedScenario));
+                    setRefScenarios(teams.filter(t => t.isReferencedScenario));
 
                     // Clean up referenced placements
                     const nextReferencedPlacements = { ...referencedPlacements };
@@ -2886,7 +2914,8 @@ export default function App() {
                       dbService.deletePlayer(id).catch(err => console.error("Error deleting player from Supabase:", err));
                       updatedTeams.forEach(item => {
                         if (item.modified) {
-                          dbService.upsertShadowTeam(item.team).catch(err => console.error("Error updating placements after player delete:", err));
+                          if (item.team.isReferencedScenario) dbService.upsertReferencedTeamScenario(item.team).catch(err => console.error("Error updating placements after player delete:", err));
+                          else dbService.upsertMainTeamScenario(item.team).catch(err => console.error("Error updating placements after player delete:", err));
                         }
                       });
                     }
@@ -2978,11 +3007,21 @@ export default function App() {
                 onClick={() => {
                   const id = teamScenarioToDeleteId;
                   if (id) {
-                    const remaining = [...mainScenarios, ...refScenarios].filter(t => t.id !== id);
-                    setShadowTeams(remaining);
-                    setActiveTeamId(remaining[0]?.id || 't1');
-                    if (isSupabaseConfigured) {
-                      dbService.deleteShadowTeam(id).catch(err => console.error("Error deleting scenario from Supabase:", err));
+                    const scenarioToDelete = [...mainScenarios, ...refScenarios].find(t => t.id === id);
+                    if (scenarioToDelete) {
+                      if (scenarioToDelete.isReferencedScenario) {
+                        setRefScenarios(prev => prev.filter(t => t.id !== id));
+                      } else {
+                        setMainScenarios(prev => prev.filter(t => t.id !== id));
+                      }
+                      setActiveTeamId((prev) => (prev === id ? (mainScenarios[0]?.id || refScenarios[0]?.id || 't1') : prev));
+                    }
+
+                    if (isSupabaseConfigured && scenarioToDelete) {
+                      const deleteFn = scenarioToDelete.isReferencedScenario 
+                        ? dbService.deleteReferencedTeamScenario 
+                        : dbService.deleteMainTeamScenario;
+                      deleteFn(id).catch(err => console.error("Error deleting scenario from Supabase:", err));
                     }
                   }
                   setTeamScenarioToDeleteId(null);

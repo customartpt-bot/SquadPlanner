@@ -64,13 +64,14 @@ export const ensureUUID = (id: string): string => {
 
 // Helper to convert React Player type to DB/snake_case format
 const mapPlayerToDB = (player: Player) => {
-  // Store altPosition1, altPosition2, isReferenced, club, and photoUrl in a transparent metadata string appended to notes
+  // Store altPosition1, altPosition2, isReferenced, club in a transparent metadata string appended to notes.
+  // To avoid extremely large payloads and regex backtracking parser failures on loads,
+  // we do NOT include the base64 photoUrl in the metadata string inside the notes column.
   const metadata = {
     altPosition1: player.altPosition1 || '',
     altPosition2: player.altPosition2 || '',
     isReferenced: !!player.isReferenced,
-    club: player.club || '',
-    photoUrl: player.photoUrl || ''
+    club: player.club || ''
   };
   
   // Strip any existing metadata suffix first
@@ -112,7 +113,10 @@ const mapDBToPlayer = (dbPlayer: any): Player => {
       altPosition2 = parsed.altPosition2 || '';
       isReferenced = !!parsed.isReferenced;
       club = parsed.club || '';
-      photoUrl = parsed.photoUrl || '';
+      // Support reading legacy photos stored inside metadata JSON
+      if (parsed.photoUrl) {
+        photoUrl = parsed.photoUrl;
+      }
       
       // Remove metadata string from user-visible notes
       notes = notes.replace(/\s*\[METADATA:.*\]\s*$/, '').trim();
@@ -121,7 +125,7 @@ const mapDBToPlayer = (dbPlayer: any): Player => {
     }
   }
 
-  // Support direct db columns if the user ran the SQL to add those columns
+  // Support direct db columns (prioritizing the column values over metadata JSON)
   if (dbPlayer.club) {
     club = dbPlayer.club;
   }
@@ -518,21 +522,37 @@ export default function App() {
     }
   }, []);
 
-  // Save states to localStorage
+  // Save states to localStorage safely
   useEffect(() => {
-    localStorage.setItem('MISTER_TACTIC_PLAYERS', JSON.stringify(players));
+    try {
+      localStorage.setItem('MISTER_TACTIC_PLAYERS', JSON.stringify(players));
+    } catch (e) {
+      console.warn("Local storage players quota exceeded:", e);
+    }
   }, [players]);
 
   useEffect(() => {
-    localStorage.setItem('MISTER_TACTIC_TEAMS', JSON.stringify(shadowTeams));
+    try {
+      localStorage.setItem('MISTER_TACTIC_TEAMS', JSON.stringify(shadowTeams));
+    } catch (e) {
+      console.warn("Local storage teams quota exceeded:", e);
+    }
   }, [shadowTeams]);
 
   useEffect(() => {
-    localStorage.setItem('MISTER_TACTIC_ACTIVE_TEAM', activeTeamId);
+    try {
+      localStorage.setItem('MISTER_TACTIC_ACTIVE_TEAM', activeTeamId);
+    } catch (e) {
+      console.warn("Local storage active team quota exceeded:", e);
+    }
   }, [activeTeamId]);
 
   useEffect(() => {
-    localStorage.setItem('MISTER_TACTIC_REFERENCED_PLACEMENTS', JSON.stringify(referencedPlacements));
+    try {
+      localStorage.setItem('MISTER_TACTIC_REFERENCED_PLACEMENTS', JSON.stringify(referencedPlacements));
+    } catch (e) {
+      console.warn("Local storage referenced placements quota exceeded:", e);
+    }
   }, [referencedPlacements]);
 
   // Find active Shadow Team Scenario
@@ -664,11 +684,18 @@ export default function App() {
 
   // Update athlete changes
   const handleUpdatePlayer = (updatedPlayer: Player) => {
+    const previousPlayers = [...players];
     setPlayers(prev => prev.map(p => p.id === updatedPlayer.id ? updatedPlayer : p));
     setActivePlayer(updatedPlayer);
     setIsEditingPlayer(false);
+    
     if (isSupabaseConfigured) {
-      dbService.upsertPlayer(updatedPlayer).catch(err => console.error("Error updating player in Supabase:", err));
+      dbService.upsertPlayer(updatedPlayer).catch(err => {
+        console.error("Error updating player in Supabase:", err);
+        // Rollback on core failure
+        setPlayers(previousPlayers);
+        setAlertMessage(`Falha ao atualizar atleta na Base de Dados (Supabase). Detalhes técnicos: ${err?.message || JSON.stringify(err)}`);
+      });
     }
   };
 

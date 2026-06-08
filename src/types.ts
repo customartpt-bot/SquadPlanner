@@ -14,6 +14,7 @@ export interface Player {
   isReferenced?: boolean; // Flag to separate referenced/watchlist players from main squad
   club?: string; // Current club
   photoUrl?: string; // Profile photo url or base64 data url
+  priority?: number; // Priority rank for referenced players (1-10)
 }
 
 export interface TacticalPosition {

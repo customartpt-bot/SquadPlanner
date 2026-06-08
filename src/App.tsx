@@ -707,7 +707,7 @@ export default function App() {
     if (targetSystem) {
       targetSystem.positions.forEach(pos => {
         if (activeTeam.placements?.[pos.id]) {
-          nextPlacements[pos.id] = activeTeam.placements[pos.id];
+          nextPlacements[pos.id] = activeTeam.placements?.[pos.id];
         }
       });
     }
@@ -822,7 +822,7 @@ export default function App() {
     if (nextReferenced) {
       // Was a standard player, moving to referenced. Remove from standard team placements
       const allCombinedScenarios = [...mainScenarios, ...refScenarios];
-      const updatedTeams = allCombinedScenarios.map(t => {
+      const updatedTeams: { team: Scenario, modified: boolean }[] = allCombinedScenarios.map(t => {
         const updatedPlacements = { ...t.placements };
         let modified = false;
         Object.keys(updatedPlacements).forEach(key => {
@@ -833,8 +833,8 @@ export default function App() {
         });
         return { team: { ...t, placements: updatedPlacements }, modified };
       });
-      setMainScenarios(updatedTeams.filter(t => !t.isReferencedScenario));
-      setRefScenarios(updatedTeams.filter(t => t.isReferencedScenario));
+      setMainScenarios(updatedTeams.filter(item => !item.team.isReferencedScenario).map(item => item.team));
+      setRefScenarios(updatedTeams.filter(item => item.team.isReferencedScenario).map(item => item.team));
       if (isSupabaseConfigured) {
         updatedTeams.forEach(item => {
           if (item.modified) {
@@ -885,7 +885,7 @@ export default function App() {
 
     if (activeTab === 'squad') {
       // Check if player is already in this position
-      if (squadTeam.placements[positionId] === draggedPlayerId) {
+      if (squadTeam.placements?.[positionId] === draggedPlayerId) {
         setDraggedPlayerId(null);
         return;
       }
@@ -1002,12 +1002,13 @@ export default function App() {
     const allScenarios = [...mainScenarios, ...refScenarios];
     const newTeamName = `Cenário Tático #${allScenarios.length + 1}`;
     const newTeamId = generateUUID();
-    const newTeam: ShadowTeam = {
+    const newTeam: Scenario = {
       id: newTeamId,
       name: newTeamName,
       systemId: '4-3-3',
       placements: {},
-      notes: 'Escreva anotações importantes sobre este cenário tático ou análise fantasma aqui.'
+      notes: 'Escreva anotações importantes sobre este cenário tático ou análise fantasma aqui.',
+      isReferencedScenario: false
     };
 
     setMainScenarios(prev => [...prev, newTeam]);
@@ -1438,8 +1439,8 @@ export default function App() {
               <AnimatePresence>
                 {activeFormation.positions.map((pos) => {
                   const assignedPlayerId = activeTab === 'squad' 
-                    ? currentTeam.placements[pos.id] 
-                    : referencedPlacements[pos.id];
+                    ? currentTeam.placements?.[pos.id] 
+                    : referencedPlacements?.[pos.id];
                   const assignedPlayer = players.find((p) => p.id === assignedPlayerId);
                   
                   return (
@@ -2286,6 +2287,12 @@ export default function App() {
                             <span className={`text-[8px] font-bold px-1 rounded uppercase tracking-wider font-mono bg-slate-50 text-slate-500 border border-slate-150`}>
                               {player.positionGroup}
                             </span>
+                            
+                            {player.club && (
+                              <span className="text-[8px] font-bold px-1 rounded uppercase tracking-wider font-mono bg-indigo-50 text-indigo-700 border border-indigo-150">
+                                {player.club}
+                              </span>
+                            )}
 
                             {/* Football state label */}
                             <span className={`text-[8px] font-bold px-1 rounded ${
@@ -2914,7 +2921,8 @@ export default function App() {
                       dbService.deletePlayer(id).catch(err => console.error("Error deleting player from Supabase:", err));
                       updatedTeams.forEach(item => {
                         if (item.modified) {
-                          if (item.team.isReferencedScenario) dbService.upsertReferencedTeamScenario(item.team).catch(err => console.error("Error updating placements after player delete:", err));
+                          const team = item.team as any;
+                          if (team.isReferencedScenario) dbService.upsertReferencedTeamScenario(item.team).catch(err => console.error("Error updating placements after player delete:", err));
                           else dbService.upsertMainTeamScenario(item.team).catch(err => console.error("Error updating placements after player delete:", err));
                         }
                       });

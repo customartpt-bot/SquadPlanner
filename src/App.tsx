@@ -849,6 +849,14 @@ export default function App() {
     setDraggedPlayerId(null);
   };
 
+  // Synchronize referencedPlacements with the 'scout-mode-team' from shadowTeams
+  useEffect(() => {
+    const scoutTeam = shadowTeams.find(t => t.id === 'scout-mode-team');
+    if (scoutTeam && scoutTeam.placements) {
+        setReferencedPlacements(scoutTeam.placements);
+    }
+  }, [shadowTeams]);
+
   // Non-drag selection placement helper
   const handleSelectSpotToAssign = (spotId: string) => {
     setSelectedSpotId(spotId);
@@ -890,6 +898,19 @@ export default function App() {
 
       nextReferencedPlacements[selectedSpotId] = playerId;
       setReferencedPlacements(nextReferencedPlacements);
+      
+      // Persist to DB under special ID 'scout-mode-team'
+      if (isSupabaseConfigured) {
+        const scoutTeam: ShadowTeam = {
+          id: 'scout-mode-team',
+          name: 'Scout Mode Placements',
+          systemId: '4-3-3',
+          placements: nextReferencedPlacements,
+          notes: '',
+          isReferencedScenario: true
+        };
+        dbService.upsertShadowTeam(scoutTeam).catch(console.error);
+      }
     }
 
     setSelectedSpotId(null);
@@ -914,6 +935,19 @@ export default function App() {
       const nextReferencedPlacements = { ...referencedPlacements };
       delete nextReferencedPlacements[positionId];
       setReferencedPlacements(nextReferencedPlacements);
+      
+      // Persist to DB under special ID 'scout-mode-team'
+      if (isSupabaseConfigured) {
+        const scoutTeam: ShadowTeam = {
+          id: 'scout-mode-team',
+          name: 'Scout Mode Placements',
+          systemId: '4-3-3',
+          placements: nextReferencedPlacements,
+          notes: '',
+          isReferencedScenario: true
+        };
+        dbService.upsertShadowTeam(scoutTeam).catch(console.error);
+      }
     }
   };
 

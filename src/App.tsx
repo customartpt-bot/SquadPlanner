@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Player, TacticalPosition, Formation, ShadowTeam } from './types';
-import { FORMATIONS } from './constants';
+import { FORMATIONS, INITIAL_PLAYERS } from './constants';
 import SquadDepthChart from './components/SquadDepthChart';
 import { createClient } from '@supabase/supabase-js';
 
@@ -64,7 +64,20 @@ export const ensureUUID = (id: string): string => {
 
 // Helper to convert React Player type to DB/snake_case format
 const mapPlayerToDB = (player: Player) => {
-  return {
+  // Store altPosition1, altPosition2, isReferenced, club, and photoUrl in a transparent metadata string appended to notes
+  const metadata = {
+    altPosition1: player.altPosition1 || '',
+    altPosition2: player.altPosition2 || '',
+    isReferenced: !!player.isReferenced,
+    club: player.club || '',
+    photoUrl: player.photoUrl || ''
+  };
+  
+  // Strip any existing metadata suffix first
+  const cleanNotes = (player.notes || '').replace(/\s*\[METADATA:.*\]\s*$/, '');
+  const notesWithMeta = `${cleanNotes} [METADATA:${JSON.stringify(metadata)}]`.trim();
+
+  const data: any = {
     id: ensureUUID(player.id),
     name: player.name,
     number: player.number,
@@ -73,13 +86,49 @@ const mapPlayerToDB = (player: Player) => {
     preferred_foot: player.preferredFoot,
     status: player.status,
     rating: player.rating,
-    notes: player.notes || '',
+    notes: notesWithMeta,
     birth_date: player.birthDate || null,
+    club: player.club || null,
+    photo_url: player.photoUrl || null
   };
+
+  return data;
 };
 
 // Helper to convert DB format to React Player type
 const mapDBToPlayer = (dbPlayer: any): Player => {
+  let notes = dbPlayer.notes || '';
+  let altPosition1 = '';
+  let altPosition2 = '';
+  let isReferenced = false;
+  let club = '';
+  let photoUrl = '';
+
+  const metaMatch = notes.match(/\[METADATA:(.*)\]/);
+  if (metaMatch) {
+    try {
+      const parsed = JSON.parse(metaMatch[1]);
+      altPosition1 = parsed.altPosition1 || '';
+      altPosition2 = parsed.altPosition2 || '';
+      isReferenced = !!parsed.isReferenced;
+      club = parsed.club || '';
+      photoUrl = parsed.photoUrl || '';
+      
+      // Remove metadata string from user-visible notes
+      notes = notes.replace(/\s*\[METADATA:.*\]\s*$/, '').trim();
+    } catch (e) {
+      console.error("Failed to parse player notes metadata:", e);
+    }
+  }
+
+  // Support direct db columns if the user ran the SQL to add those columns
+  if (dbPlayer.club) {
+    club = dbPlayer.club;
+  }
+  if (dbPlayer.photo_url) {
+    photoUrl = dbPlayer.photo_url;
+  }
+
   return {
     id: dbPlayer.id,
     name: dbPlayer.name,
@@ -89,8 +138,13 @@ const mapDBToPlayer = (dbPlayer: any): Player => {
     preferredFoot: dbPlayer.preferred_foot as any,
     status: dbPlayer.status as any,
     rating: Number(dbPlayer.rating),
-    notes: dbPlayer.notes || '',
+    notes: notes,
     birthDate: dbPlayer.birth_date || undefined,
+    altPosition1: altPosition1 || undefined,
+    altPosition2: altPosition2 || undefined,
+    isReferenced: isReferenced || undefined,
+    club: club || undefined,
+    photoUrl: photoUrl || undefined
   };
 };
 
@@ -280,7 +334,15 @@ import {
   BookOpen,
   ClipboardList,
   AlertTriangle,
-  Calendar
+  Calendar,
+  Users,
+  Target,
+  ArrowLeftRight,
+  ArrowUpRight,
+  ArrowDownLeft,
+  Upload,
+  Shield,
+  Camera
 } from 'lucide-react';
 
 const DEFAULT_TEAMS: ShadowTeam[] = [
@@ -328,7 +390,7 @@ export default function App() {
   // --- Persistent States ---
   const [players, setPlayers] = useState<Player[]>(() => {
     const saved = localStorage.getItem('MISTER_TACTIC_PLAYERS');
-    return saved ? JSON.parse(saved) : [];
+    return saved ? JSON.parse(saved) : INITIAL_PLAYERS;
   });
 
   const [shadowTeams, setShadowTeams] = useState<ShadowTeam[]>(() => {
@@ -359,10 +421,32 @@ export default function App() {
   const [formNumber, setFormNumber] = useState<number>(10);
   const [formBirthDate, setFormBirthDate] = useState('');
   const [formPosition, setFormPosition] = useState('MC');
+  const [formAltPos1, setFormAltPos1] = useState('');
+  const [formAltPos2, setFormAltPos2] = useState('');
+  const [formIsReferenced, setFormIsReferenced] = useState(false);
   const [formFoot, setFormFoot] = useState<'Direito' | 'Esquerdo' | 'Ambos'>('Direito');
   const [formRating, setFormRating] = useState<number>(3);
   const [formNotes, setFormNotes] = useState('');
   const [formStatus, setFormStatus] = useState<Player['status']>('Suplente');
+  const [formClub, setFormClub] = useState('');
+  const [formPhotoUrl, setFormPhotoUrl] = useState('');
+
+  // Interactive workspaces
+  const [activeTab, setActiveTab] = useState<'squad' | 'scout'>('squad');
+  const [referencedPlacements, setReferencedPlacements] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem('MISTER_TACTIC_REFERENCED_PLACEMENTS');
+      if (saved && saved !== 'undefined' && saved !== 'null') {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.error("Error parsing referenced placements:", e);
+    }
+    return {};
+  });
 
   // Filtering variables
   const [selectedYearFilter, setSelectedYearFilter] = useState<string>('ALL');
@@ -447,6 +531,10 @@ export default function App() {
     localStorage.setItem('MISTER_TACTIC_ACTIVE_TEAM', activeTeamId);
   }, [activeTeamId]);
 
+  useEffect(() => {
+    localStorage.setItem('MISTER_TACTIC_REFERENCED_PLACEMENTS', JSON.stringify(referencedPlacements));
+  }, [referencedPlacements]);
+
   // Find active Shadow Team Scenario
   const currentTeam = shadowTeams.find((team) => team.id === activeTeamId) || shadowTeams[0] || DEFAULT_TEAMS[0];
   const activeFormation = FORMATIONS.find((f) => f.id === currentTeam.systemId) || FORMATIONS[0];
@@ -495,6 +583,25 @@ export default function App() {
     }
   };
 
+  // Helper to handle local profile photo upload and convert to base64
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, callback: (base64: string) => void) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    if (file.size > 2 * 1024 * 1024) {
+      setAlertMessage("A imagem selecionada é demasiado grande. Por favor, escolha uma imagem até 2MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (reader.result && typeof reader.result === 'string') {
+        callback(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   // Add athlete to club pool
   const handleAddPlayer = (e: React.FormEvent) => {
     e.preventDefault();
@@ -509,11 +616,16 @@ export default function App() {
       number: formNumber || 1,
       positionGroup: mappedGroup as any,
       position: formPosition,
+      altPosition1: formAltPos1 || undefined,
+      altPosition2: formAltPos2 || undefined,
+      isReferenced: formIsReferenced || undefined,
       preferredFoot: formFoot,
-      status: formStatus,
+      status: 'Suplente',
       rating: formRating,
       notes: formNotes,
       birthDate: formBirthDate || undefined,
+      club: formClub || undefined,
+      photoUrl: formPhotoUrl || undefined,
     };
 
     // Adiciona localmente de imediato
@@ -539,9 +651,14 @@ export default function App() {
     setFormNumber(10);
     setFormBirthDate('');
     setFormPosition('MC');
+    setFormAltPos1('');
+    setFormAltPos2('');
+    setFormIsReferenced(activeTab === 'scout');
     setFormNotes('');
     setFormRating(3);
     setFormStatus('Suplente');
+    setFormClub('');
+    setFormPhotoUrl('');
     setShowAddForm(false);
   };
 
@@ -552,6 +669,60 @@ export default function App() {
     setIsEditingPlayer(false);
     if (isSupabaseConfigured) {
       dbService.upsertPlayer(updatedPlayer).catch(err => console.error("Error updating player in Supabase:", err));
+    }
+  };
+
+  // Move standard squad player to Referenced list, and vice versa
+  const handleToggleReferenced = (player: Player) => {
+    const nextReferenced = !player.isReferenced;
+    const updatedPlayer = { ...player, isReferenced: nextReferenced };
+    
+    // Clear placement in standard or referenced board to avoid ghost entries
+    if (nextReferenced) {
+      // Was a standard player, moving to referenced. Remove from standard team placements
+      const updatedTeams = shadowTeams.map(t => {
+        const updatedPlacements = { ...t.placements };
+        let modified = false;
+        Object.keys(updatedPlacements).forEach(key => {
+          if (updatedPlacements[key] === player.id) {
+            delete updatedPlacements[key];
+            modified = true;
+          }
+        });
+        return { team: { ...t, placements: updatedPlacements }, modified };
+      });
+      setShadowTeams(updatedTeams.map(item => item.team));
+      if (isSupabaseConfigured) {
+        updatedTeams.forEach(item => {
+          if (item.modified) {
+            dbService.upsertShadowTeam(item.team).catch(err => console.error("Error updating placements after player move:", err));
+          }
+        });
+      }
+    } else {
+      // Was a referenced player, moving to standard. Remove from referenced placements
+      const nextReferencedPlacements = { ...referencedPlacements };
+      let refModified = false;
+      Object.keys(nextReferencedPlacements).forEach(key => {
+        if (nextReferencedPlacements[key] === player.id) {
+          delete nextReferencedPlacements[key];
+          refModified = true;
+        }
+      });
+      if (refModified) {
+        setReferencedPlacements(nextReferencedPlacements);
+      }
+    }
+
+    setPlayers(prev => prev.map(p => p.id === player.id ? updatedPlayer : p));
+    if (activePlayer?.id === player.id) {
+      setActivePlayer(updatedPlayer);
+    }
+
+    if (isSupabaseConfigured) {
+      dbService.upsertPlayer(updatedPlayer).catch(err => {
+        console.error("Error moving player to/from referenced in Supabase:", err);
+      });
     }
   };
 
@@ -568,30 +739,50 @@ export default function App() {
   const handleDropOnPosition = (positionId: string) => {
     if (!draggedPlayerId) return;
 
-    // Check if player is already in this position
-    if (currentTeam.placements[positionId] === draggedPlayerId) {
-      setDraggedPlayerId(null);
-      return;
-    }
-
-    const nextPlacements = { ...currentTeam.placements };
-
-    // Clear duplicates of this player
-    Object.keys(nextPlacements).forEach(k => {
-      if (nextPlacements[k] === draggedPlayerId) {
-        delete nextPlacements[k];
+    if (activeTab === 'squad') {
+      // Check if player is already in this position
+      if (currentTeam.placements[positionId] === draggedPlayerId) {
+        setDraggedPlayerId(null);
+        return;
       }
-    });
 
-    nextPlacements[positionId] = draggedPlayerId;
-    const updatedTeam = { ...currentTeam, placements: nextPlacements };
-    setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
+      const nextPlacements = { ...currentTeam.placements };
 
-    if (isSupabaseConfigured) {
-      dbService.upsertShadowTeam(updatedTeam).catch(err => {
-        console.error("Error saving drag-and-drop placements:", err);
-        setAlertMessage(`Falha ao colocar o atleta em campo no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
+      // Clear duplicates of this player
+      Object.keys(nextPlacements).forEach(k => {
+        if (nextPlacements[k] === draggedPlayerId) {
+          delete nextPlacements[k];
+        }
       });
+
+      nextPlacements[positionId] = draggedPlayerId;
+      const updatedTeam = { ...currentTeam, placements: nextPlacements };
+      setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
+
+      if (isSupabaseConfigured) {
+        dbService.upsertShadowTeam(updatedTeam).catch(err => {
+          console.error("Error saving drag-and-drop placements:", err);
+          setAlertMessage(`Falha ao colocar o atleta em campo no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
+        });
+      }
+    } else {
+      // Scout Mode
+      if (referencedPlacements[positionId] === draggedPlayerId) {
+        setDraggedPlayerId(null);
+        return;
+      }
+
+      const nextReferencedPlacements = { ...referencedPlacements };
+
+      // Clear duplicates of this player
+      Object.keys(nextReferencedPlacements).forEach(k => {
+        if (nextReferencedPlacements[k] === draggedPlayerId) {
+          delete nextReferencedPlacements[k];
+        }
+      });
+
+      nextReferencedPlacements[positionId] = draggedPlayerId;
+      setReferencedPlacements(nextReferencedPlacements);
     }
 
     setDraggedPlayerId(null);
@@ -605,24 +796,39 @@ export default function App() {
   const handleManualAssign = (playerId: string) => {
     if (!selectedSpotId) return;
 
-    const nextPlacements = { ...currentTeam.placements };
+    if (activeTab === 'squad') {
+      const nextPlacements = { ...currentTeam.placements };
 
-    // Clear duplicates of this player
-    Object.keys(nextPlacements).forEach(k => {
-      if (nextPlacements[k] === playerId) {
-        delete nextPlacements[k];
-      }
-    });
-
-    nextPlacements[selectedSpotId] = playerId;
-    const updatedTeam = { ...currentTeam, placements: nextPlacements };
-    setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
-
-    if (isSupabaseConfigured) {
-      dbService.upsertShadowTeam(updatedTeam).catch(err => {
-        console.error("Error saving manual placements:", err);
-        setAlertMessage(`Falha ao atribuir o atleta no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
+      // Clear duplicates of this player
+      Object.keys(nextPlacements).forEach(k => {
+        if (nextPlacements[k] === playerId) {
+          delete nextPlacements[k];
+        }
       });
+
+      nextPlacements[selectedSpotId] = playerId;
+      const updatedTeam = { ...currentTeam, placements: nextPlacements };
+      setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
+
+      if (isSupabaseConfigured) {
+        dbService.upsertShadowTeam(updatedTeam).catch(err => {
+          console.error("Error saving manual placements:", err);
+          setAlertMessage(`Falha ao atribuir o atleta no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
+        });
+      }
+    } else {
+      // Scout Mode
+      const nextReferencedPlacements = { ...referencedPlacements };
+
+      // Clear duplicates of this player
+      Object.keys(nextReferencedPlacements).forEach(k => {
+        if (nextReferencedPlacements[k] === playerId) {
+          delete nextReferencedPlacements[k];
+        }
+      });
+
+      nextReferencedPlacements[selectedSpotId] = playerId;
+      setReferencedPlacements(nextReferencedPlacements);
     }
 
     setSelectedSpotId(null);
@@ -630,16 +836,23 @@ export default function App() {
 
   // Remove player from active position
   const handleRemoveFromPosition = (positionId: string) => {
-    const nextPlacements = { ...currentTeam.placements };
-    delete nextPlacements[positionId];
-    const updatedTeam = { ...currentTeam, placements: nextPlacements };
-    setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
+    if (activeTab === 'squad') {
+      const nextPlacements = { ...currentTeam.placements };
+      delete nextPlacements[positionId];
+      const updatedTeam = { ...currentTeam, placements: nextPlacements };
+      setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
 
-    if (isSupabaseConfigured) {
-      dbService.upsertShadowTeam(updatedTeam).catch(err => {
-        console.error("Error removing player from position in Supabase:", err);
-        setAlertMessage(`Falha ao retirar o atleta do relvado no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
-      });
+      if (isSupabaseConfigured) {
+        dbService.upsertShadowTeam(updatedTeam).catch(err => {
+          console.error("Error removing player from position in Supabase:", err);
+          setAlertMessage(`Falha ao retirar o atleta do relvado no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
+        });
+      }
+    } else {
+      // Scout Mode
+      const nextReferencedPlacements = { ...referencedPlacements };
+      delete nextReferencedPlacements[positionId];
+      setReferencedPlacements(nextReferencedPlacements);
     }
   };
 
@@ -696,6 +909,11 @@ export default function App() {
 
   // Filters available roster
   const filteredPlayers = players.filter((player) => {
+    // Show referenced players on 'scout' tab, standard players on 'squad' tab
+    const isRef = !!player.isReferenced;
+    const matchesTab = activeTab === 'squad' ? !isRef : isRef;
+    if (!matchesTab) return false;
+
     const matchesSearch = player.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           player.number.toString().includes(searchQuery);
     
@@ -725,8 +943,9 @@ export default function App() {
 
   // Check where players currently are placed in the Active team
   const getPlayerPlacement = (playerId: string) => {
-    const spot = Object.keys(currentTeam.placements).find(
-      (key) => currentTeam.placements[key] === playerId
+    const placements = activeTab === 'squad' ? (currentTeam?.placements || {}) : (referencedPlacements || {});
+    const spot = Object.keys(placements).find(
+      (key) => placements[key] === playerId
     );
     if (!spot) return null;
     const pos = activeFormation.positions.find((p) => p.id === spot);
@@ -736,7 +955,9 @@ export default function App() {
   // Find alternatives/substitutes for a specific position spot on the pitch
   const getAlternativesForPosition = (posId: string) => {
     // Current starting player ID on this spot
-    const startingPlayerId = currentTeam.placements[posId];
+    const startingPlayerId = activeTab === 'squad'
+      ? (currentTeam?.placements?.[posId])
+      : (referencedPlacements?.[posId]);
     
     // Identify the core position category code (GR, DE, DD, DC, MDF, MC, MCO, ME, MD, EE, ED, PL)
     let targetPosCode = '';
@@ -753,26 +974,34 @@ export default function App() {
     else if (cleanId.includes('EE')) targetPosCode = 'EE';
     else if (cleanId.includes('ED')) targetPosCode = 'ED';
     else if (cleanId.includes('PL') || cleanId.includes('PLE') || cleanId.includes('PLD')) targetPosCode = 'PL';
-    
-    // Fallback to general positionGroups if needed:
-    let targetGroup: 'GK' | 'DEF' | 'MID' | 'ATT' = 'MID';
-    if (cleanId === 'GR') targetGroup = 'GK';
-    else if (['DE', 'DD', 'CE', 'CD', 'CC'].some(p => cleanId.includes(p))) targetGroup = 'DEF';
-    else if (['MDF', 'MC', 'MCO', 'MO', 'ME', 'MD', 'ALA', 'MCE', 'MCD'].some(p => cleanId.includes(p))) targetGroup = 'MID';
-    else if (['PL', 'EE', 'ED'].some(p => cleanId.includes(p))) targetGroup = 'ATT';
 
     // True alternatives are players who are NOT starting ANYWHERE in the pitch,
     // so they are currently unplaced (substitutes)
-    const placedPlayerIds = Object.values(currentTeam.placements);
-    const unplacedPlayers = players.filter(p => !placedPlayerIds.includes(p.id));
+    const placedPlayerIds = activeTab === 'squad'
+      ? Object.values(currentTeam?.placements || {})
+      : Object.values(referencedPlacements || {});
 
-    // First try to match by exact position
-    let matches = unplacedPlayers.filter(p => p.position === targetPosCode);
+    const unplacedPlayers = players
+      .filter(p => activeTab === 'squad' ? !p.isReferenced : !!p.isReferenced)
+      .filter(p => !placedPlayerIds.includes(p.id));
 
-    // Filter by positionGroup as fallback if no exact matches are available
-    if (matches.length === 0) {
-      matches = unplacedPlayers.filter(p => p.positionGroup === targetGroup);
-    }
+    // Compatibility check logic implementing user requirements
+    const isPositionCompatible = (playerPos: string | undefined, targetPos: string): boolean => {
+      if (!playerPos) return false;
+      if (playerPos === targetPos) return true;
+      // EE (Extremo Esquerdo) and ME (Médio Esquerdo) are compatible alternative roles
+      if ((playerPos === 'EE' && targetPos === 'ME') || (playerPos === 'ME' && targetPos === 'EE')) return true;
+      // ED (Extremo Direito) and MD (Médio Direito) are compatible alternative roles
+      if ((playerPos === 'ED' && targetPos === 'MD') || (playerPos === 'MD' && targetPos === 'ED')) return true;
+      return false;
+    };
+
+    // Filter unplaced players who have either primary or explicit alternative compatibility
+    const matches = unplacedPlayers.filter(p => {
+      return isPositionCompatible(p.position, targetPosCode) ||
+             isPositionCompatible(p.altPosition1, targetPosCode) ||
+             isPositionCompatible(p.altPosition2, targetPosCode);
+    });
 
     return matches;
   };
@@ -781,10 +1010,10 @@ export default function App() {
     <div className="min-h-screen bg-slate-100 text-slate-800 font-sans flex flex-col selection:bg-red-600 selection:text-white" id="main-layout-root">
       
       {/* 🔴 RED AND WHITE STRIPED HEADER */}
-      <header className="h-16 flex items-center justify-between px-6 bg-white border-b-4 border-red-600 shadow-sm relative overflow-hidden shrink-0" id="app-header">
+      <header className="flex flex-col md:flex-row items-center justify-between px-4 md:px-6 py-3 md:py-0 md:h-16 bg-white border-b-4 border-red-600 shadow-sm relative overflow-hidden shrink-0 gap-3 md:gap-4" id="app-header">
         <div className="absolute inset-0 opacity-10 pointer-events-none" style={{ background: 'repeating-linear-gradient(90deg, #dc2626 0, #dc2626 20px, #ffffff 20px, #ffffff 40px)' }}></div>
         
-        <div className="flex items-center gap-3 z-10">
+        <div className="flex items-center gap-3 z-10 flex-wrap justify-center sm:justify-start">
           <div className="relative w-10 h-10 select-none flex items-center justify-center">
             <img
               src="https://raw.githubusercontent.com/customartpt-bot/fcbfotos/main/logo.png"
@@ -827,14 +1056,14 @@ export default function App() {
           )}
         </div>
 
-        <div className="flex items-center gap-2 z-10">
+        <div className="flex flex-wrap items-center justify-center gap-2 z-10 w-full md:w-auto">
           {/* Tactical System Switcher */}
-          <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200" id="system-selector">
+          <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 flex-1 sm:flex-initial" id="system-selector">
             <select
               id="formation-select"
               value={currentTeam.systemId}
               onChange={(e) => handleSystemChange(e.target.value)}
-              className="px-3 py-1 bg-white shadow-sm rounded-md text-xs font-bold text-slate-800 border-none outline-none focus:ring-1 focus:ring-red-600 cursor-pointer appearance-none"
+              className="px-3 py-1 bg-white shadow-sm rounded-md text-xs font-bold text-slate-800 border-none outline-none focus:ring-1 focus:ring-red-600 cursor-pointer appearance-none w-full"
             >
               {FORMATIONS.map((form) => (
                 <option key={form.id} value={form.id}>
@@ -845,7 +1074,7 @@ export default function App() {
           </div>
 
           {/* Plan Scenarios Selector */}
-          <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 items-center gap-1" id="scenario-selector">
+          <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 items-center gap-1 flex-1 sm:flex-initial" id="scenario-selector">
             <select
               id="team-scenario-select"
               value={activeTeamId}
@@ -853,7 +1082,7 @@ export default function App() {
                 setActiveTeamId(e.target.value);
                 setEditingTeamName(false);
               }}
-              className="px-3 py-1 bg-white shadow-sm rounded-md text-xs font-bold text-slate-800 border-none outline-none focus:ring-1 focus:ring-red-600 cursor-pointer max-w-[130px] appearance-none"
+              className="px-3 py-1 bg-white shadow-sm rounded-md text-xs font-bold text-slate-800 border-none outline-none focus:ring-1 focus:ring-red-600 cursor-pointer appearance-none flex-1 sm:flex-initial max-w-[130px] sm:max-w-[none]"
             >
               {shadowTeams.map((team) => (
                 <option key={team.id} value={team.id}>
@@ -865,14 +1094,14 @@ export default function App() {
             <button
               onClick={handleCreateNewTeam}
               title="Criar Novo Cenário"
-              className="text-slate-600 hover:text-red-600 p-1 rounded transition-colors cursor-pointer"
+              className="text-slate-600 hover:text-red-600 p-1 rounded transition-colors cursor-pointer shrink-0"
             >
               <Plus className="h-4 w-4" />
             </button>
             <button
               onClick={handleDeleteActiveTeam}
               title="Apagar Cenário Ativo"
-              className="text-slate-400 hover:text-rose-600 p-1 rounded transition-colors cursor-pointer"
+              className="text-slate-400 hover:text-rose-600 p-1 rounded transition-colors cursor-pointer shrink-0"
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -946,17 +1175,17 @@ export default function App() {
           </div>
 
           {/* THE TACTICAL PITCH CANVAS */}
-          <div className="relative bg-slate-200 rounded-2xl overflow-hidden border border-slate-300 p-8 flex items-center justify-center shadow-xl" id="pitch-container">
+          <div className="relative bg-slate-200 rounded-2xl overflow-hidden border border-slate-300 p-2 sm:p-5 md:p-8 flex items-center justify-center shadow-xl" id="pitch-container">
             
             {/* Visual Pitch Outer Grass Margin */}
             <div 
-              className="relative w-full aspect-[4/5] sm:aspect-[4/5] md:aspect-[3/4.2] bg-classic-pitch rounded-xl border-[6px] border-white overflow-hidden shadow-2xl flex flex-col justify-between"
+              className="relative w-full aspect-[4/5] sm:aspect-[4/5] md:aspect-[3/4.2] bg-classic-pitch rounded-xl border-4 md:border-[6px] border-white overflow-hidden shadow-2xl flex flex-col justify-between"
               onDragOver={(e) => e.preventDefault()}
               id="football-field-canvas"
             >
               
               {/* WHITE FIELD PAINT MARKINGS */}
-              <div className="absolute inset-4 border border-white/30 pointer-events-none rounded-sm">
+              <div className="absolute inset-2 md:inset-4 border border-white/30 pointer-events-none rounded-sm">
                 
                 {/* Center Circle */}
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-28 sm:w-36 h-28 sm:h-36 rounded-full border border-white/30"></div>
@@ -990,7 +1219,9 @@ export default function App() {
               {/* TACTICAL SPOTS ON THE FIELD */}
               <AnimatePresence>
                 {activeFormation.positions.map((pos) => {
-                  const assignedPlayerId = currentTeam.placements[pos.id];
+                  const assignedPlayerId = activeTab === 'squad' 
+                    ? currentTeam.placements[pos.id] 
+                    : referencedPlacements[pos.id];
                   const assignedPlayer = players.find((p) => p.id === assignedPlayerId);
                   
                   return (
@@ -1017,25 +1248,16 @@ export default function App() {
                           }}
                         >
                           <div className="relative">
-                            
                             {/* Standardized circular player badges */}
-                            <div className={`w-12 h-12 sm:w-13 sm:h-13 rounded-full border-4 flex items-center justify-center font-black shadow-lg relative transition-all duration-300 ${
+                            <div className={`w-8 h-8 sm:w-12 sm:h-12 md:w-13 md:h-13 rounded-full border-2 sm:border-4 flex items-center justify-center font-black shadow-lg relative transition-all duration-300 overflow-hidden bg-white ${
                               activePlayer?.id === assignedPlayer.id
-                                ? 'bg-red-600 border-white text-white ring-4 ring-red-600/20 scale-105'
-                                : 'bg-white border-red-600 text-red-600 hover:border-red-500 hover:scale-105'
+                                ? 'border-white ring-4 ring-red-600/20 scale-105'
+                                : 'border-red-600 hover:border-red-500 hover:scale-105'
                             }`}>
-                              <span className="text-base sm:text-lg font-black">{assignedPlayer.number}</span>
-
-                              {/* Preferred Foot Indicator */}
-                              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-slate-900 border border-white text-[8px] font-bold text-white flex items-center justify-center shadow" title={`Pé Preferido: ${assignedPlayer.preferredFoot}`}>
-                                {assignedPlayer.preferredFoot === 'Ambos' ? 'A' : assignedPlayer.preferredFoot === 'Esquerdo' ? 'E' : 'D'}
-                              </span>
-
-                              {/* Injury Status */}
-                              {assignedPlayer.status === 'Lesionado' && (
-                                <span className="absolute -bottom-1 -left-1 w-4 h-4 rounded-full bg-rose-600 border border-white text-[9px] font-bold text-white flex items-center justify-center shadow" title="Lesionado">
-                                  🚑
-                                </span>
+                              {assignedPlayer.photoUrl ? (
+                                <img src={assignedPlayer.photoUrl} alt={assignedPlayer.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                              ) : (
+                                <span className="text-[11px] sm:text-base md:text-lg font-black text-red-650">{assignedPlayer.number}</span>
                               )}
                             </div>
 
@@ -1045,19 +1267,19 @@ export default function App() {
                                 e.stopPropagation();
                                 handleRemoveFromPosition(pos.id);
                               }}
-                              className="absolute -top-1.5 -left-1.5 bg-red-600 hover:bg-neutral-905 border border-white rounded-full p-0.5 shadow-md text-white hover:scale-110 transition-transform cursor-pointer"
+                              className="absolute -top-1 -left-1 bg-red-600 hover:bg-neutral-905 border border-white rounded-full p-0.5 shadow-md text-white hover:scale-110 transition-transform cursor-pointer"
                               title="Retirar do campo"
                             >
-                              <X className="h-3 w-3" />
+                              <X className="h-2 w-2 sm:h-3 sm:w-3" />
                             </button>
                           </div>
 
                           {/* Player name bubble */}
-                          <div className="mt-1 text-center max-w-[84px] sm:max-w-[110px]">
-                            <div className="bg-white border border-slate-200 text-slate-800 font-extrabold text-[10px] sm:text-xs py-0.5 px-2 rounded-md shadow-md truncate leading-tight uppercase">
+                          <div className="mt-1 text-center max-w-[75px] sm:max-w-[90px] md:max-w-[110px]">
+                            <div className="bg-white border border-slate-200 text-slate-800 font-extrabold text-[8px] sm:text-[10px] md:text-xs py-0.5 px-1.5 rounded-md shadow-md truncate leading-tight uppercase">
                               {assignedPlayer.name.split(' ').pop()}
                             </div>
-                            <div className="text-[8px] font-mono tracking-wider font-extrabold text-white/95 drop-shadow-sm uppercase mt-0.5">
+                            <div className="text-[7.5px] sm:text-[8px] font-mono tracking-wider font-extrabold text-white/95 drop-shadow-sm uppercase mt-0.5">
                               {pos.shortRole}
                             </div>
                           </div>
@@ -1065,7 +1287,7 @@ export default function App() {
                       ) : (
                         /* EMPTY SLOT PLACEHOLDER DROP ZONE */
                         <div
-                          className={`flex flex-col items-center justify-center w-11 h-11 sm:w-13 sm:h-13 rounded-full border-2 border-dashed transition-all duration-305 cursor-pointer ${
+                          className={`flex flex-col items-center justify-center w-8 h-8 sm:w-12 sm:h-12 md:w-13 md:h-13 rounded-full border border-dashed transition-all duration-305 cursor-pointer ${
                             selectedSpotId === pos.id
                               ? 'border-yellow-405 bg-yellow-600/20 text-yellow-101 scale-110 animate-pulse'
                               : 'border-white/40 hover:border-white/85 bg-white/10 hover:bg-white/20 text-white hover:scale-105 shadow-sm'
@@ -1076,10 +1298,10 @@ export default function App() {
                           }}
                           title={`Clique ou arraste um atleta para a posição ${pos.role}`}
                         >
-                          <span className="text-[10px] sm:text-xs font-mono font-black tracking-wide">
+                          <span className="text-[8.5px] sm:text-xs font-mono font-black tracking-wide">
                             {pos.shortRole}
                           </span>
-                          <span className="text-[7px] font-sans font-bold uppercase text-white/80 leading-none">
+                          <span className="text-[5.5px] sm:text-[7px] font-sans font-bold uppercase text-white/80 leading-none">
                             Vazio
                           </span>
                         </div>
@@ -1090,7 +1312,7 @@ export default function App() {
                         const alts = getAlternativesForPosition(pos.id);
                         if (alts.length === 0) return null;
                         return (
-                          <div className="mt-1 bg-slate-950/80 backdrop-blur-sm text-white rounded-md p-1 text-[8px] font-extrabold space-y-0.5 w-[75px] sm:w-[90px] shadow-lg border border-white/20 select-none overflow-hidden hover:scale-105 transition-all">
+                          <div className="hidden sm:block mt-1 bg-slate-950/80 backdrop-blur-sm text-white rounded-md p-1 text-[8px] font-extrabold space-y-0.5 w-[75px] sm:w-[90px] shadow-lg border border-white/20 select-none overflow-hidden hover:scale-105 transition-all">
                             <div className="text-[7px] text-amber-400 font-mono scale-95 leading-none mb-0.5 border-b border-white/10 pb-0.5 text-center uppercase tracking-wider">
                               Suplentes
                             </div>
@@ -1099,18 +1321,25 @@ export default function App() {
                                 key={alt.id}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  const nextPlacements = { ...currentTeam.placements };
-                                  // Assign this player to this spot
-                                  nextPlacements[pos.id] = alt.id;
-                                  
-                                  const updatedTeam = { ...currentTeam, placements: nextPlacements };
-                                  setShadowTeams(prev => prev.map(t => t.id === currentTeam.id ? updatedTeam : t));
-                                  
-                                  if (isSupabaseConfigured) {
-                                    dbService.upsertShadowTeam(updatedTeam).catch(err => {
-                                      console.error("Error saving quick start upgrade on Supabase:", err);
-                                      setAlertMessage(`Falha ao ascender suplente a titular no Supabase: ${err?.message || JSON.stringify(err)}`);
-                                    });
+                                  if (activeTab === 'squad') {
+                                    const nextPlacements = { ...currentTeam.placements };
+                                    // Assign this player to this spot
+                                    nextPlacements[pos.id] = alt.id;
+                                    
+                                    const updatedTeam = { ...currentTeam, placements: nextPlacements };
+                                    setShadowTeams(prev => prev.map(t => t.id === currentTeam.id ? updatedTeam : t));
+                                    
+                                    if (isSupabaseConfigured) {
+                                      dbService.upsertShadowTeam(updatedTeam).catch(err => {
+                                        console.error("Error saving quick start upgrade on Supabase:", err);
+                                        setAlertMessage(`Falha ao ascender suplente a titular no Supabase: ${err?.message || JSON.stringify(err)}`);
+                                      });
+                                    }
+                                  } else {
+                                    // Scout Mode
+                                    const nextReferencedPlacements = { ...referencedPlacements };
+                                    nextReferencedPlacements[pos.id] = alt.id;
+                                    setReferencedPlacements(nextReferencedPlacements);
                                   }
                                 }}
                                 className="truncate leading-normal px-1 py-0.5 rounded bg-white/10 hover:bg-red-600 hover:text-white transition-all text-center cursor-pointer font-bold border border-transparent hover:border-white/20"
@@ -1171,11 +1400,23 @@ export default function App() {
                       </button>
                     </div>
 
-                    <div className="max-h-60 overflow-y-auto space-y-1.5 my-3 pr-1" id="assign-players-list">
-                      {players.length === 0 ? (
-                        <p className="text-xs text-slate-500 text-center py-4">Nenhum jogador cadastrado no clube.</p>
-                      ) : (
-                        players.map((p) => {
+                     <div className="max-h-60 overflow-y-auto space-y-1.5 my-3 pr-1" id="assign-players-list">
+                      {(() => {
+                        const tabPlayers = activeTab === 'squad' 
+                          ? players.filter(p => !p.isReferenced) 
+                          : players.filter(p => !!p.isReferenced);
+                        
+                        if (tabPlayers.length === 0) {
+                          return (
+                            <p className="text-xs text-slate-500 text-center py-4">
+                              {activeTab === 'squad' 
+                                ? 'Nenhum jogador cadastrado no plantel principal.' 
+                                : 'Nenhum jogador cadastrado nos referenciados.'}
+                            </p>
+                          );
+                        }
+
+                        return tabPlayers.map((p) => {
                           const placement = getPlayerPlacement(p.id);
                           return (
                             <button
@@ -1184,7 +1425,7 @@ export default function App() {
                               className="w-full bg-slate-50 hover:bg-slate-100 border border-slate-200 p-2 rounded-lg flex justify-between items-center text-left transition-colors text-xs shadow-sm"
                             >
                               <div className="flex items-center gap-2">
-                                <span className="w-5 h-5 bg-red-600 text-white rounded font-mono font-bold flex items-center justify-center text-[10px]">
+                                <span className="w-5 h-5 bg-red-650 text-white rounded font-mono font-bold flex items-center justify-center text-[10px]">
                                   {p.number}
                                 </span>
                                 <div>
@@ -1208,8 +1449,8 @@ export default function App() {
                               </div>
                             </button>
                           );
-                        })
-                      )}
+                        });
+                      })()}
                     </div>
                     <p className="text-[10px] text-slate-400 text-center mt-2 font-medium">
                       💡 Selecionar um atleta já em campo irá deslocá-lo para esta posição.
@@ -1314,6 +1555,50 @@ export default function App() {
                   <span>Criar Atleta</span>
                 </button>
               </div>
+            </div>
+
+            {/* Tab Switcher: Plantel vs Prospecção */}
+            <div className="flex border-b border-slate-200 bg-white p-2 gap-2" id="squad-tab-switcher">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('squad');
+                  setFormIsReferenced(false);
+                }}
+                className={`flex-1 py-2 px-3 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  activeTab === 'squad'
+                    ? 'bg-slate-900 text-white shadow'
+                    : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Users className="h-4 w-4" />
+                <span>Plantel Principal</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold font-mono ${
+                  activeTab === 'squad' ? 'bg-red-650 text-white' : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {players.filter(p => !p.isReferenced).length}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('scout');
+                  setFormIsReferenced(true);
+                }}
+                className={`flex-1 py-2 px-3 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  activeTab === 'scout'
+                    ? 'bg-slate-900 text-white shadow'
+                    : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Target className="h-4 w-4" />
+                <span>Jogadores Referenciados</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold font-mono ${
+                  activeTab === 'scout' ? 'bg-red-650 text-white' : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {players.filter(p => !!p.isReferenced).length}
+                </span>
+              </button>
             </div>
 
             {/* EXPANDABLE INLINE ATHLETE CREATOR FORM */}
@@ -1424,19 +1709,87 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Disponibilidade / Estatuto Inicial</label>
-                    <select
-                      value={formStatus}
-                      onChange={(e) => setFormStatus(e.target.value as any)}
-                      className="bg-white border border-slate-200 text-slate-800 rounded p-1.5 w-full focus:outline-none focus:border-red-600 cursor-pointer text-xs font-sans"
-                    >
-                      <option value="Titular">Titular (Disponível)</option>
-                      <option value="Suplente">Suplente (Alternativa)</option>
-                      <option value="Reservado">Reservado (Bancada)</option>
-                      <option value="Lesionado">Lesionado (Inativo) 🚑</option>
-                      <option value="Negociação">Em Negociação (Transferência)</option>
-                    </select>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Posição Alternativa 1</label>
+                      <select
+                        value={formAltPos1}
+                        onChange={(e) => setFormAltPos1(e.target.value)}
+                        className="bg-white border border-slate-200 text-slate-805 rounded p-1.5 w-full focus:outline-none focus:border-red-650 cursor-pointer text-xs"
+                      >
+                        <option value="">Nenhuma</option>
+                        {FOOTBALL_POSITIONS.map(pos => (
+                          <option key={pos.code} value={pos.code}>{pos.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Posição Alternativa 2</label>
+                      <select
+                        value={formAltPos2}
+                        onChange={(e) => setFormAltPos2(e.target.value)}
+                        className="bg-white border border-slate-200 text-slate-805 rounded p-1.5 w-full focus:outline-none focus:border-red-650 cursor-pointer text-xs"
+                      >
+                        <option value="">Nenhuma</option>
+                        {FOOTBALL_POSITIONS.map(pos => (
+                          <option key={pos.code} value={pos.code}>{pos.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="pt-0.5">
+                    <label className="flex items-center gap-2 text-[10px] font-bold text-slate-500 uppercase cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={formIsReferenced}
+                        onChange={(e) => setFormIsReferenced(e.target.checked)}
+                        className="rounded border-slate-300 text-red-650 h-3.5 w-3.5 focus:ring-red-500 cursor-pointer"
+                      />
+                      <span>Jogador Referenciado (Gabinete de Prospecção/Olheiro)</span>
+                    </label>
+                  </div>
+
+                   <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Clube Atual</label>
+                      <input
+                        type="text"
+                        value={formClub}
+                        onChange={(e) => setFormClub(e.target.value)}
+                        className="bg-white border border-slate-200 text-slate-800 rounded p-1.5 w-full focus:outline-none focus:border-red-600"
+                        placeholder="Ex: SL Benfica"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Foto de Perfil</label>
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded border border-slate-200 cursor-pointer text-xs transition-colors w-full">
+                          <Upload className="h-4 w-4 text-slate-500 shrink-0" />
+                          <span className="truncate">
+                            {formPhotoUrl ? 'Foto Carregada ✓' : 'Escolher Foto'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => handleImageUpload(e, setFormPhotoUrl)}
+                            className="hidden"
+                          />
+                        </label>
+                        {formPhotoUrl && (
+                          <div className="relative w-8 h-8 rounded-full border border-slate-200 overflow-hidden shrink-0">
+                            <img src={formPhotoUrl} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            <button
+                              type="button"
+                              onClick={() => setFormPhotoUrl('')}
+                              className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity text-white text-[8px] font-bold cursor-pointer"
+                            >
+                              Apagar
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
                   <div>
@@ -1627,6 +1980,18 @@ export default function App() {
                         )}
 
                         <button
+                          onClick={() => handleToggleReferenced(player)}
+                          className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                            player.isReferenced 
+                              ? 'text-teal-600 hover:bg-teal-50 hover:text-teal-800' 
+                              : 'text-indigo-500 hover:bg-indigo-50 hover:text-indigo-700'
+                          }`}
+                          title={player.isReferenced ? "Promover para o Plantel Principal" : "Mover para Jogadores Referenciados"}
+                        >
+                          <ArrowLeftRight className="h-3.5 w-3.5" />
+                        </button>
+
+                        <button
                           onClick={() => {
                             setActivePlayer(player);
                             setIsEditingPlayer(false);
@@ -1664,9 +2029,9 @@ export default function App() {
 
           {/* DYNAMIC SQUAD SYSTEM BALANCE GRAPHICS */}
           <SquadDepthChart
-            players={players}
+            players={players.filter(p => activeTab === 'squad' ? !p.isReferenced : !!p.isReferenced)}
             activeFormation={activeFormation}
-            placements={currentTeam.placements}
+            placements={activeTab === 'squad' ? (currentTeam?.placements || {}) : (referencedPlacements || {})}
           />
 
         </div>
@@ -1764,40 +2129,110 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-2-alt flex-row">
                     <div>
-                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Disponibilidade</label>
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Posição Alternativa 1</label>
                       <select
-                        value={activePlayer.status || 'Suplente'}
-                        onChange={(e) => setActivePlayer({ ...activePlayer, status: e.target.value as any })}
+                        value={activePlayer.altPosition1 || ''}
+                        onChange={(e) => setActivePlayer({ ...activePlayer, altPosition1: e.target.value || undefined })}
                         className="bg-slate-50 text-slate-900 rounded p-1.5 w-full border border-slate-200 focus:outline-none focus:border-red-600 cursor-pointer text-xs"
                       >
-                        <option value="Titular">Titular (Disponível)</option>
-                        <option value="Suplente">Suplente (Alternativa)</option>
-                        <option value="Reservado">Reservado (Bancada)</option>
-                        <option value="Lesionado">Lesionado (Inativo) 🚑</option>
-                        <option value="Negociação">Em Negociação (Transferência)</option>
+                        <option value="">Nenhuma</option>
+                        {FOOTBALL_POSITIONS.map(pos => (
+                          <option key={pos.code} value={pos.code}>{pos.label}</option>
+                        ))}
                       </select>
                     </div>
-
                     <div>
-                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Classificação Técnica</label>
-                      <div className="flex gap-1 items-center mt-1">
-                        {[1, 2, 3, 4, 5].map((star) => (
-                          <button
-                            key={star}
-                            type="button"
-                            onClick={() => setActivePlayer({ ...activePlayer, rating: star })}
-                            className="bg-transparent border-0 cursor-pointer"
-                          >
-                            <Star
-                              className={`h-4.5 w-4.5 ${
-                                star <= activePlayer.rating ? 'text-amber-400 fill-amber-400' : 'text-slate-300'
-                              }`}
-                            />
-                          </button>
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Posição Alternativa 2</label>
+                      <select
+                        value={activePlayer.altPosition2 || ''}
+                        onChange={(e) => setActivePlayer({ ...activePlayer, altPosition2: e.target.value || undefined })}
+                        className="bg-slate-50 text-slate-900 rounded p-1.5 w-full border border-slate-200 focus:outline-none focus:border-red-600 cursor-pointer text-xs"
+                      >
+                        <option value="">Nenhuma</option>
+                        {FOOTBALL_POSITIONS.map(pos => (
+                          <option key={pos.code} value={pos.code}>{pos.label}</option>
                         ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="flex items-center gap-2 text-[10px] uppercase font-bold text-slate-400 mb-3 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={!!activePlayer.isReferenced}
+                        onChange={(e) => setActivePlayer({ ...activePlayer, isReferenced: e.target.checked || undefined })}
+                        className="rounded border-slate-300 text-red-650 h-4 w-4 focus:ring-red-500"
+                      />
+                      <span>Jogador de Prospecção / Referenciado</span>
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Clube Atual</label>
+                      <input
+                        type="text"
+                        value={activePlayer.club || ''}
+                        onChange={(e) => setActivePlayer({ ...activePlayer, club: e.target.value })}
+                        className="bg-slate-50 text-slate-900 rounded p-1.5 w-full border border-slate-200 focus:outline-none focus:border-red-600 text-xs font-sans"
+                        placeholder="Ex: SL Benfica"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Foto de Perfil</label>
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded border border-slate-200 cursor-pointer text-xs transition-colors w-full">
+                          <Upload className="h-4 w-4 text-slate-500 shrink-0" />
+                          <span className="truncate">
+                            {activePlayer.photoUrl ? 'Foto Carregada ✓' : 'Escolher Foto'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                              handleImageUpload(e, (base64) => {
+                                setActivePlayer({ ...activePlayer, photoUrl: base64 });
+                              });
+                            }}
+                            className="hidden"
+                          />
+                        </label>
+                        {activePlayer.photoUrl && (
+                          <div className="relative w-8 h-8 rounded-full border border-slate-200 overflow-hidden shrink-0">
+                            <img src={activePlayer.photoUrl} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            <button
+                              type="button"
+                              onClick={() => setActivePlayer({ ...activePlayer, photoUrl: undefined })}
+                              className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity text-white text-[8px] font-bold cursor-pointer"
+                            >
+                              Apagar
+                            </button>
+                          </div>
+                        )}
                       </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Classificação Técnica</label>
+                    <div className="flex gap-1 items-center mt-1">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <button
+                          key={star}
+                          type="button"
+                          onClick={() => setActivePlayer({ ...activePlayer, rating: star })}
+                          className="bg-transparent border-0 cursor-pointer"
+                        >
+                          <Star
+                            className={`h-4.5 w-4.5 ${
+                              star <= activePlayer.rating ? 'text-amber-400 fill-amber-400' : 'text-slate-300'
+                            }`}
+                          />
+                        </button>
+                      ))}
                     </div>
                   </div>
 
@@ -1863,10 +2298,19 @@ export default function App() {
                   </button>
 
                   <div className="flex items-start gap-4 pb-4 border-b border-slate-200 mb-4">
-                    {/* Retro striped jersey motif circle */}
-                    <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center border-2 border-red-600 text-2xl font-black text-red-600 shadow-inner shrink-0 shadow-black/5">
-                      {activePlayer.number}
-                    </div>
+                    {activePlayer.photoUrl ? (
+                      <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-red-600 shadow-md relative shrink-0 bg-white">
+                        <img src={activePlayer.photoUrl} alt={activePlayer.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        <span className="absolute -bottom-1 -right-1 bg-slate-900 border border-white text-[9px] px-1 rounded-sm font-mono font-black text-white">
+                          {activePlayer.number}
+                        </span>
+                      </div>
+                    ) : (
+                      /* Retro striped jersey motif circle */
+                      <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center border-2 border-red-600 text-2xl font-black text-red-600 shadow-inner shrink-0 shadow-black/5">
+                        {activePlayer.number}
+                      </div>
+                    )}
 
                     <div>
                       <span className="text-[9px] bg-red-50 text-red-600 border border-red-200 px-2 py-0.5 rounded uppercase font-black tracking-widest inline-block">
@@ -1881,17 +2325,40 @@ export default function App() {
                       
                       <div className="flex flex-col gap-1.5 mt-1.5">
                         <div className="flex items-center gap-3 text-xs text-slate-500 font-medium">
-                          <span className="flex items-center gap-1">
+                          <span className="flex items-center gap-1 text-slate-600">
                             <Footprints className="h-3.5 w-3.5 text-slate-400" />
-                            Pé Preferido: <strong className="text-slate-700">{activePlayer.preferredFoot}</strong>
+                            Pé: <strong className="text-slate-800">{activePlayer.preferredFoot}</strong>
                           </span>
                           <span className="w-1 h-3 bg-slate-200 rounded"></span>
-                          <span className="flex items-center gap-1">
-                            <Award className="h-3.5 w-3.5 text-slate-400" />
-                            Estatuto: <strong className="text-slate-700">{activePlayer.status}</strong>
+                          <span className="flex items-center gap-1 text-slate-600">
+                            <Shield className="h-3.5 w-3.5 text-slate-400" />
+                            Clube: <strong className="text-slate-800">{activePlayer.club || 'Sem clube'}</strong>
                           </span>
                         </div>
                         
+                        <div className="text-xs text-slate-500 font-medium mt-1">
+                          Posição Principal: <strong className="text-slate-800 uppercase px-1.5 py-0.5 bg-red-50 border border-red-250 text-red-700 rounded text-[10px] font-mono">{activePlayer.position || 'MC'}</strong>
+                          {(activePlayer.altPosition1 || activePlayer.altPosition2) && (
+                            <span className="ml-2">
+                              Alternativas: {
+                                [activePlayer.altPosition1, activePlayer.altPosition2]
+                                  .filter(Boolean)
+                                  .map((p, idx) => (
+                                    <span key={idx} className="ml-1 px-1.5 py-0.5 bg-slate-100 border border-slate-200 text-slate-700 rounded text-[10px] font-mono uppercase">
+                                      {p}
+                                    </span>
+                                  ))
+                              }
+                            </span>
+                          )}
+                        </div>
+
+                        {activePlayer.isReferenced && (
+                          <div className="bg-purple-100 border border-purple-200 text-purple-800 font-bold text-[9px] uppercase rounded px-2 py-0.5 mt-0.5 w-fit tracking-wide animate-pulse-subtle">
+                            🔍 Jogador Referenciado / Prospecção
+                          </div>
+                        )}
+
                         <div className="flex items-center gap-1 text-xs text-slate-500 font-medium bg-slate-50 border border-slate-150 rounded-md px-2 py-1 w-fit mt-0.5">
                           <Calendar className="h-3.5 w-3.5 text-red-650 mr-0.5" />
                           <span>Nascimento: </span>
@@ -1993,19 +2460,19 @@ export default function App() {
       </AnimatePresence>
 
       {/* Footer Mini-Control */}
-      <footer className="h-11 bg-slate-900 flex items-center px-6 justify-between select-none shrink-0" id="app-footer-stats">
-        <div className="flex gap-4 items-center">
+      <footer className="min-h-11 py-2 sm:py-0 sm:h-11 bg-slate-900 flex flex-col sm:flex-row items-center px-4 sm:px-6 justify-between gap-1.5 sm:gap-4 select-none shrink-0" id="app-footer-stats">
+        <div className="flex gap-4 items-center justify-center">
           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest font-mono">Temporada {new Date().getFullYear()}</span>
           <span className="text-[10px] text-red-500 font-bold uppercase tracking-widest flex items-center gap-1.5 animate-pulse">
             <span className="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
             Em Edição
           </span>
         </div>
-        <div className="flex items-center gap-4 font-mono">
+        <div className="flex items-center gap-4 font-mono justify-center">
           <div className="text-[10px] text-slate-400 font-medium hidden sm:block">Arraste atletas para reposicionar</div>
           <div className="h-4 w-[1px] bg-slate-700 hidden sm:block"></div>
-          <div className="text-[10px] text-white font-bold">
-            {Math.round(100 - (players.length > 0 ? (activeFormation.positions.filter(pos => !currentTeam.placements[pos.id]).length / 11) * 100 : 0))}% Equilíbrio de Plantel
+          <div className="text-[10px] text-white font-bold select-none text-center">
+            {Math.round(100 - (players.length > 0 ? (activeFormation.positions.filter(pos => !(activeTab === 'squad' ? currentTeam?.placements?.[pos.id] : referencedPlacements?.[pos.id])).length / 11) * 100 : 0))}% {activeTab === 'squad' ? 'Equilíbrio de Plantel' : 'Equilíbrio de Prospecção'}
           </div>
         </div>
       </footer>
@@ -2058,6 +2525,19 @@ export default function App() {
                     });
 
                     setShadowTeams(updatedTeams.map(item => item.team));
+
+                    // Clean up referenced placements
+                    const nextReferencedPlacements = { ...referencedPlacements };
+                    let refModified = false;
+                    Object.keys(nextReferencedPlacements).forEach(key => {
+                      if (nextReferencedPlacements[key] === id) {
+                        delete nextReferencedPlacements[key];
+                        refModified = true;
+                      }
+                    });
+                    if (refModified) {
+                      setReferencedPlacements(nextReferencedPlacements);
+                    }
 
                     if (isSupabaseConfigured) {
                       dbService.deletePlayer(id).catch(err => console.error("Error deleting player from Supabase:", err));
@@ -2178,14 +2658,18 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  const updatedTeam = { ...currentTeam, placements: {} };
-                  setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
-                  
-                  if (isSupabaseConfigured) {
-                    dbService.upsertShadowTeam(updatedTeam).catch(err => {
-                      console.error("Error clearing pitch in Supabase:", err);
-                      setAlertMessage(`Falha ao retirar os jogadores do campo no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
-                    });
+                  if (activeTab === 'squad') {
+                    const updatedTeam = { ...currentTeam, placements: {} };
+                    setShadowTeams(prev => prev.map(t => (t.id === currentTeam.id ? updatedTeam : t)));
+                    
+                    if (isSupabaseConfigured) {
+                      dbService.upsertShadowTeam(updatedTeam).catch(err => {
+                        console.error("Error clearing pitch in Supabase:", err);
+                        setAlertMessage(`Falha ao retirar os jogadores do campo no Supabase. Detalhes: ${err?.message || JSON.stringify(err)}`);
+                      });
+                    }
+                  } else {
+                    setReferencedPlacements({});
                   }
                   setConfirmClearPitch(false);
                 }}

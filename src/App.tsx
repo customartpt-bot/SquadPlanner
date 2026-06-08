@@ -177,6 +177,7 @@ const mapTeamToDB = (team: ShadowTeam) => {
     system_id: team.systemId,
     placements: mappedPlacements,
     notes: team.notes || '',
+    is_referenced_scenario: team.isReferencedScenario || false,
   };
 };
 
@@ -188,6 +189,7 @@ const mapDBToTeam = (dbTeam: any): ShadowTeam => {
     systemId: dbTeam.system_id,
     placements: dbTeam.placements || {},
     notes: dbTeam.notes || '',
+    isReferencedScenario: dbTeam.is_referenced_scenario || false,
   };
 };
 
@@ -493,8 +495,29 @@ export default function App() {
           let finalPlayers = dbPlayers;
           let finalTeams = dbTeams;
 
-          if (dbPlayers) {
+          if (dbPlayers && dbPlayers.length > 0) {
             setPlayers(dbPlayers);
+          } else {
+            // Seed base initial players if database is fresh
+            try {
+              for (const player of INITIAL_PLAYERS) {
+                await dbService.upsertPlayer(player);
+              }
+              const seededPlayers = await dbService.getPlayers();
+              if (seededPlayers && seededPlayers.length > 0) {
+                setPlayers(seededPlayers);
+                finalPlayers = seededPlayers;
+              } else {
+                const mappedInit = INITIAL_PLAYERS.map(p => ({ ...p, id: ensureUUID(p.id) }));
+                setPlayers(mappedInit);
+                finalPlayers = mappedInit;
+              }
+            } catch (err) {
+              console.error("Failed to seed initial players to Supabase:", err);
+              const mappedInit = INITIAL_PLAYERS.map(p => ({ ...p, id: ensureUUID(p.id) }));
+              setPlayers(mappedInit);
+              finalPlayers = mappedInit;
+            }
           }
 
           if (dbTeams && dbTeams.length > 0) {
@@ -1434,8 +1457,8 @@ export default function App() {
                         const alts = getAlternativesForPosition(pos.id);
                         if (alts.length === 0) return null;
                         return (
-                          <div className="hidden sm:block mt-1 bg-slate-950/80 backdrop-blur-sm text-white rounded-md p-1 text-[8px] font-extrabold space-y-0.5 w-[75px] sm:w-[90px] max-h-28 overflow-y-auto shadow-lg border border-white/20 select-none scrollbar-thin scrollbar-thumb-white/20 hover:scale-105 transition-all">
-                            <div className="text-[7px] text-amber-400 font-mono scale-95 leading-none mb-0.5 border-b border-white/10 pb-0.5 text-center uppercase tracking-wider sticky top-0 bg-slate-950/90 py-0.5">
+                          <div className="block mt-0.5 sm:mt-1 bg-slate-950/85 backdrop-blur-xs text-white rounded p-0.5 sm:p-1 text-[7.5px] sm:text-[8px] font-extrabold space-y-0.5 w-[70px] sm:w-[90px] max-h-16 sm:max-h-28 overflow-y-auto shadow-lg border border-white/20 select-none scrollbar-none scrollbar-thin scrollbar-thumb-white/20 hover:scale-[1.03] transition-all z-20">
+                            <div className="text-[6.5px] sm:text-[7px] text-amber-400 font-mono scale-95 leading-none mb-0.5 border-b border-white/10 pb-0.5 text-center uppercase tracking-wider sticky top-0 bg-slate-950/90 py-0.5">
                               Suplentes
                             </div>
                             {alts.map((alt) => (
@@ -1514,6 +1537,7 @@ export default function App() {
                         </h4>
                       </div>
                       <button 
+                        type="button"
                         onClick={() => setSelectedSpotId(null)}
                         className="text-slate-400 hover:text-slate-805 p-1 rounded-lg hover:bg-slate-100 transition-colors"
                       >
@@ -1521,7 +1545,7 @@ export default function App() {
                       </button>
                     </div>
 
-                     <div className="max-h-60 overflow-y-auto space-y-1.5 my-3 pr-1" id="assign-players-list">
+                    <div className="max-h-80 overflow-y-auto space-y-3.5 my-3 pr-1" id="assign-players-list">
                       {(() => {
                         const tabPlayers = activeTab === 'squad' 
                           ? players.filter(p => !p.isReferenced) 
@@ -1537,40 +1561,130 @@ export default function App() {
                           );
                         }
 
-                        return tabPlayers.map((p) => {
+                        // Determine target compatibility position code
+                        const targetPosCode = (() => {
+                          if (!selectedSpotId) return '';
+                          const cleanId = selectedSpotId.toUpperCase();
+                          if (cleanId === 'GR') return 'GR';
+                          if (cleanId === 'DE') return 'DE';
+                          if (cleanId === 'DD') return 'DD';
+                          if (cleanId === 'CE' || cleanId === 'CD' || cleanId === 'CC') return 'DC';
+                          if (cleanId.includes('MDF')) return 'MDF';
+                          if (cleanId.includes('MCO') || cleanId === 'MO') return 'MCO';
+                          if (cleanId.includes('MCE') || cleanId.includes('MCD') || cleanId.includes('MC_E') || cleanId.includes('MC_D') || cleanId === 'MC') return 'MC';
+                          if (cleanId.includes('ME') || cleanId.includes('MD_E')) return 'ME';
+                          if (cleanId.includes('MD') || cleanId.includes('MD_D')) return 'MD';
+                          if (cleanId.includes('EE')) return 'EE';
+                          if (cleanId.includes('ED')) return 'ED';
+                          if (cleanId.includes('PL') || cleanId.includes('PLE') || cleanId.includes('PLD')) return 'PL';
+                          return '';
+                        })();
+
+                        const isPositionCompatible = (playerPos: string | undefined, targetPos: string): boolean => {
+                          if (!playerPos) return false;
+                          if (playerPos === targetPos) return true;
+                          if ((playerPos === 'EE' && targetPos === 'ME') || (playerPos === 'ME' && targetPos === 'EE')) return true;
+                          if ((playerPos === 'ED' && targetPos === 'MD') || (playerPos === 'MD' && targetPos === 'ED')) return true;
+                          if ((playerPos === 'MCO' && targetPos === 'MC') || (playerPos === 'MC' && targetPos === 'MCO')) return true;
+                          return false;
+                        };
+
+                        const compatiblePlayers = tabPlayers.filter(p => {
+                          return isPositionCompatible(p.position, targetPosCode) ||
+                                 isPositionCompatible(p.altPosition1, targetPosCode) ||
+                                 isPositionCompatible(p.altPosition2, targetPosCode);
+                        });
+
+                        const otherPlayers = tabPlayers.filter(p => {
+                          return !(isPositionCompatible(p.position, targetPosCode) ||
+                                   isPositionCompatible(p.altPosition1, targetPosCode) ||
+                                   isPositionCompatible(p.altPosition2, targetPosCode));
+                        });
+
+                        const renderPlayerSelectorRow = (p: Player) => {
                           const placement = getPlayerPlacement(p.id);
+                          const isPrimary = p.position === targetPosCode;
+                          const isAlt = !isPrimary && (p.altPosition1 === targetPosCode || p.altPosition2 === targetPosCode);
+                          
                           return (
                             <button
                               key={p.id}
+                              type="button"
                               onClick={() => handleManualAssign(p.id)}
-                              className="w-full bg-slate-50 hover:bg-slate-100 border border-slate-200 p-2 rounded-lg flex justify-between items-center text-left transition-colors text-xs shadow-sm"
+                              className={`w-full hover:bg-slate-100 border p-2 rounded-lg flex justify-between items-center text-left transition-colors text-xs shadow-xs cursor-pointer ${
+                                isPrimary 
+                                  ? 'bg-emerald-50/40 border-emerald-200' 
+                                  : isAlt 
+                                    ? 'bg-amber-50/40 border-amber-200' 
+                                    : 'bg-slate-50 border-slate-200'
+                              }`}
                             >
                               <div className="flex items-center gap-2">
-                                <span className="w-5 h-5 bg-red-650 text-white rounded font-mono font-bold flex items-center justify-center text-[10px]">
+                                <span className={`w-5 h-5 rounded font-mono font-bold flex items-center justify-center text-[10px] ${
+                                  isPrimary 
+                                    ? 'bg-emerald-600 text-white' 
+                                    : isAlt 
+                                      ? 'bg-amber-500 text-white' 
+                                      : 'bg-slate-600 text-white'
+                                }`}>
                                   {p.number}
                                 </span>
                                 <div>
-                                  <p className="font-extrabold text-slate-900">{p.name}</p>
-                                  <p className="text-[9px] text-slate-400 uppercase tracking-widest leading-none mt-0.5 font-bold">
-                                    {p.positionGroup === 'GK' ? 'Guarda-Redes' : p.positionGroup === 'DEF' ? 'Defesa' : p.positionGroup === 'MID' ? 'Médio' : 'Avançado'}
-                                  </p>
+                                  <p className="font-extrabold text-slate-950">{p.name}</p>
+                                  <div className="flex items-center gap-1.5 mt-0.5">
+                                    <span className="text-[9px] text-slate-500 uppercase font-black">
+                                      {p.position || p.positionGroup}
+                                    </span>
+                                    {(p.altPosition1 || p.altPosition2) && (
+                                      <span className="text-[8px] text-slate-400 font-mono">
+                                        ({[p.altPosition1, p.altPosition2].filter(Boolean).join('/')})
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
 
                               <div className="text-right">
                                 {placement ? (
-                                  <span className="text-[9px] bg-red-50 text-red-600 border border-red-200 px-1.5 py-0.5 rounded uppercase font-bold">
-                                    No Campo ({placement.role})
+                                  <span className="text-[8px] bg-red-55 border border-red-200 px-1.5 py-0.5 rounded uppercase font-extrabold text-red-600">
+                                    Em Campo ({placement.role})
                                   </span>
                                 ) : (
-                                  <span className="text-[9px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded font-bold uppercase">
+                                  <span className="text-[8px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded font-extrabold uppercase">
                                     Disponível
                                   </span>
                                 )}
                               </div>
                             </button>
                           );
-                        });
+                        };
+
+                        return (
+                          <div className="space-y-3.5">
+                            {compatiblePlayers.length > 0 && (
+                              <div className="space-y-1.5">
+                                <div className="text-[9.5px] text-emerald-800 font-black uppercase tracking-wider flex items-center gap-1.5 bg-emerald-50 border border-emerald-200/50 px-2 py-1 rounded-md">
+                                  <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
+                                  <span>Recomendados ({compatiblePlayers.length})</span>
+                                </div>
+                                <div className="space-y-1.5">
+                                  {compatiblePlayers.map(renderPlayerSelectorRow)}
+                                </div>
+                              </div>
+                            )}
+
+                            {otherPlayers.length > 0 && (
+                              <div className="space-y-1.5">
+                                <div className="text-[9.5px] text-slate-600 font-black uppercase tracking-wider flex items-center gap-1.5 bg-slate-100 border border-slate-200 px-2 py-1 rounded-md">
+                                  <span>Outras Posições / Fora de Posição ({otherPlayers.length})</span>
+                                </div>
+                                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-0.5 scrollbar-thin">
+                                  {otherPlayers.map(renderPlayerSelectorRow)}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
                       })()}
                     </div>
                     <p className="text-[10px] text-slate-400 text-center mt-2 font-medium">

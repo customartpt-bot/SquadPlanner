@@ -4,11 +4,16 @@ export interface Player {
   number: number;
   positionGroup: 'GK' | 'DEF' | 'MID' | 'ATT'; // GK = Guarda-Redes, DEF = Defesa, MID = Médio, ATT = Avançado
   position?: string; // specific football position, e.g. "PL", "DE", "DC", etc.
+  altPosition1?: string; // First alternative position (optional)
+  altPosition2?: string; // Second alternative position (optional)
   preferredFoot: 'Direito' | 'Esquerdo' | 'Ambos';
   status: 'Titular' | 'Suplente' | 'Reservado' | 'Lesionado' | 'Negociação';
   rating: number; // 1 to 5 stars
   notes: string;
   birthDate?: string; // YYYY-MM-DD format
+  isReferenced?: boolean; // Flag to separate referenced/watchlist players from main squad
+  club?: string; // Current club
+  photoUrl?: string; // Profile photo url or base64 data url
 }
 
 export interface TacticalPosition {

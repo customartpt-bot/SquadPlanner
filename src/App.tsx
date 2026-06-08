@@ -64,14 +64,15 @@ export const ensureUUID = (id: string): string => {
 
 // Helper to convert React Player type to DB/snake_case format
 const mapPlayerToDB = (player: Player) => {
-  // Store altPosition1, altPosition2, isReferenced, club in a transparent metadata string appended to notes.
+  // Store altPosition1, altPosition2, isReferenced, club, and priority in a transparent metadata string appended to notes.
   // To avoid extremely large payloads and regex backtracking parser failures on loads,
   // we do NOT include the base64 photoUrl in the metadata string inside the notes column.
   const metadata = {
     altPosition1: player.altPosition1 || '',
     altPosition2: player.altPosition2 || '',
     isReferenced: !!player.isReferenced,
-    club: player.club || ''
+    club: player.club || '',
+    priority: player.priority || 0
   };
   
   // Strip any existing metadata suffix first
@@ -90,7 +91,8 @@ const mapPlayerToDB = (player: Player) => {
     notes: notesWithMeta,
     birth_date: player.birthDate || null,
     club: player.club || null,
-    photo_url: player.photoUrl || null
+    photo_url: player.photoUrl || null,
+    priority: player.priority || 0
   };
 
   return data;
@@ -104,6 +106,7 @@ const mapDBToPlayer = (dbPlayer: any): Player => {
   let isReferenced = false;
   let club = '';
   let photoUrl = '';
+  let priority = 0;
 
   const metaMatch = notes.match(/\[METADATA:(.*)\]/);
   if (metaMatch) {
@@ -113,6 +116,7 @@ const mapDBToPlayer = (dbPlayer: any): Player => {
       altPosition2 = parsed.altPosition2 || '';
       isReferenced = !!parsed.isReferenced;
       club = parsed.club || '';
+      priority = parsed.priority || 0;
       // Support reading legacy photos stored inside metadata JSON
       if (parsed.photoUrl) {
         photoUrl = parsed.photoUrl;
@@ -132,6 +136,9 @@ const mapDBToPlayer = (dbPlayer: any): Player => {
   if (dbPlayer.photo_url) {
     photoUrl = dbPlayer.photo_url;
   }
+  if (dbPlayer.priority !== undefined && dbPlayer.priority !== null) {
+    priority = Number(dbPlayer.priority);
+  }
 
   return {
     id: dbPlayer.id,
@@ -148,7 +155,8 @@ const mapDBToPlayer = (dbPlayer: any): Player => {
     altPosition2: altPosition2 || undefined,
     isReferenced: isReferenced || undefined,
     club: club || undefined,
-    photoUrl: photoUrl || undefined
+    photoUrl: photoUrl || undefined,
+    priority: priority || undefined
   };
 };
 
@@ -434,6 +442,7 @@ export default function App() {
   const [formStatus, setFormStatus] = useState<Player['status']>('Suplente');
   const [formClub, setFormClub] = useState('');
   const [formPhotoUrl, setFormPhotoUrl] = useState('');
+  const [formPriority, setFormPriority] = useState<number>(0);
 
   // Interactive workspaces
   const [activeTab, setActiveTab] = useState<'squad' | 'scout'>('squad');
@@ -646,6 +655,7 @@ export default function App() {
       birthDate: formBirthDate || undefined,
       club: formClub || undefined,
       photoUrl: formPhotoUrl || undefined,
+      priority: formPriority || undefined,
     };
 
     // Adiciona localmente de imediato
@@ -679,6 +689,7 @@ export default function App() {
     setFormStatus('Suplente');
     setFormClub('');
     setFormPhotoUrl('');
+    setFormPriority(0);
     setShowAddForm(false);
   };
 
@@ -957,6 +968,43 @@ export default function App() {
     }
 
     return matchesSearch && matchesGroup && matchesYear;
+  }).sort((a, b) => {
+    // Sorting order map for position roles
+    const positionOrder: Record<string, number> = {
+      'GR': 1,
+      'DE': 10, 'DC': 11, 'CD': 12, 'CE': 13, 'DD': 14,
+      'MDF': 20, 'MC': 21, 'MCO': 22, 'MO': 23, 'ME': 24, 'MD': 25,
+      'EE': 30, 'ED': 31, 'PL': 32, 'PLD': 33, 'PLE': 34
+    };
+
+    const groupOrder: Record<string, number> = { 'GK': 1, 'DEF': 2, 'MID': 3, 'ATT': 4 };
+
+    // 1. Group / Section order (GK -> DEF -> MID -> ATT)
+    const grA = groupOrder[a.positionGroup] || 99;
+    const grB = groupOrder[b.positionGroup] || 99;
+    if (grA !== grB) return grA - grB;
+
+    // 2. Specific position field hierarchy
+    const posCodeA = a.position || '';
+    const posCodeB = b.position || '';
+    const posOrdA = positionOrder[posCodeA] || 99;
+    const posOrdB = positionOrder[posCodeB] || 99;
+    if (posOrdA !== posOrdB) return posOrdA - posOrdB;
+
+    // 3. Priority Preference Rank (1, 2, 3...) ascending
+    const prioA = a.priority || 0;
+    const prioB = b.priority || 0;
+    
+    // Convert 0/falsy priority to high value so unranked appear below defined options
+    const pValA = prioA === 0 ? 999999 : prioA;
+    const pValB = prioB === 0 ? 999999 : prioB;
+    if (pValA !== pValB) return pValA - pValB;
+
+    // 4. Fallback to technical rating stars descending
+    if (b.rating !== a.rating) return b.rating - a.rating;
+
+    // 5. Fallback alphabetically
+    return a.name.localeCompare(b.name);
   });
 
   // Get unique birth years from existing squad
@@ -1020,14 +1068,57 @@ export default function App() {
       if ((playerPos === 'EE' && targetPos === 'ME') || (playerPos === 'ME' && targetPos === 'EE')) return true;
       // ED (Extremo Direito) and MD (Médio Direito) are compatible alternative roles
       if ((playerPos === 'ED' && targetPos === 'MD') || (playerPos === 'MD' && targetPos === 'ED')) return true;
+      // MCO (Médio Ofensivo) and MC (Médio Centro) are compatible alternative roles
+      if ((playerPos === 'MCO' && targetPos === 'MC') || (playerPos === 'MC' && targetPos === 'MCO')) return true;
       return false;
     };
 
     // Filter unplaced players who have either primary or explicit alternative compatibility
     const matches = unplacedPlayers.filter(p => {
-      return isPositionCompatible(p.position, targetPosCode) ||
+      const isCompat = isPositionCompatible(p.position, targetPosCode) ||
              isPositionCompatible(p.altPosition1, targetPosCode) ||
              isPositionCompatible(p.altPosition2, targetPosCode);
+
+      if (!isCompat) return false;
+
+      // Special user request: if a player is on the bench and is a forward (Avançado)
+      // and the tactical system has 2 forwards of the same target pos code,
+      // the player's name should only appear ONCE (under the first matching position)
+      // unless they have configured alternative positions.
+      if (p.positionGroup === 'ATT') {
+        const hasAltPositions = (p.altPosition1 && p.altPosition1 !== '') || (p.altPosition2 && p.altPosition2 !== '');
+        if (!hasAltPositions) {
+          const getPositionTargetCode = (id: string) => {
+            const cleanId = id.toUpperCase();
+            if (cleanId === 'GR') return 'GR';
+            if (cleanId === 'DE') return 'DE';
+            if (cleanId === 'DD') return 'DD';
+            if (cleanId === 'CE' || cleanId === 'CD' || cleanId === 'CC') return 'DC';
+            if (cleanId.includes('MDF')) return 'MDF';
+            if (cleanId.includes('MCO') || cleanId === 'MO') return 'MCO';
+            if (cleanId.includes('MCE') || cleanId.includes('MCD') || cleanId.includes('MC_E') || cleanId.includes('MC_D') || cleanId === 'MC') return 'MC';
+            if (cleanId.includes('ME') || cleanId.includes('MD_E')) return 'ME';
+            if (cleanId.includes('MD') || cleanId.includes('MD_D')) return 'MD';
+            if (cleanId.includes('EE')) return 'EE';
+            if (cleanId.includes('ED')) return 'ED';
+            if (cleanId.includes('PL') || cleanId.includes('PLE') || cleanId.includes('PLD')) return 'PL';
+            return '';
+          };
+
+          const targetCodeOfThisPost = getPositionTargetCode(posId);
+          if (targetCodeOfThisPost !== '') {
+            const sameCodePositions = activeFormation.positions.filter(pos => getPositionTargetCode(pos.id) === targetCodeOfThisPost);
+            if (sameCodePositions.length > 1) {
+              const firstPosId = sameCodePositions[0].id;
+              if (posId !== firstPosId) {
+                return false;
+              }
+            }
+          }
+        }
+      }
+
+      return true;
     });
 
     return matches;
@@ -1303,8 +1394,12 @@ export default function App() {
 
                           {/* Player name bubble */}
                           <div className="mt-1 text-center max-w-[75px] sm:max-w-[90px] md:max-w-[110px]">
-                            <div className="bg-white border border-slate-200 text-slate-800 font-extrabold text-[8px] sm:text-[10px] md:text-xs py-0.5 px-1.5 rounded-md shadow-md truncate leading-tight uppercase">
-                              {assignedPlayer.name.split(' ').pop()}
+                            <div className="bg-white border border-slate-200 text-slate-800 font-extrabold text-[7.5px] sm:text-[9.5px] md:text-[10.5px] py-0.5 px-1 rounded-md shadow-md truncate leading-tight uppercase" title={assignedPlayer.name}>
+                              {(() => {
+                                const parts = assignedPlayer.name.trim().split(/\s+/);
+                                if (parts.length <= 1) return assignedPlayer.name;
+                                return `${parts[0]} ${parts[parts.length - 1]}`;
+                              })()}
                             </div>
                             <div className="text-[7.5px] sm:text-[8px] font-mono tracking-wider font-extrabold text-white/95 drop-shadow-sm uppercase mt-0.5">
                               {pos.shortRole}
@@ -1339,11 +1434,11 @@ export default function App() {
                         const alts = getAlternativesForPosition(pos.id);
                         if (alts.length === 0) return null;
                         return (
-                          <div className="hidden sm:block mt-1 bg-slate-950/80 backdrop-blur-sm text-white rounded-md p-1 text-[8px] font-extrabold space-y-0.5 w-[75px] sm:w-[90px] shadow-lg border border-white/20 select-none overflow-hidden hover:scale-105 transition-all">
-                            <div className="text-[7px] text-amber-400 font-mono scale-95 leading-none mb-0.5 border-b border-white/10 pb-0.5 text-center uppercase tracking-wider">
+                          <div className="hidden sm:block mt-1 bg-slate-950/80 backdrop-blur-sm text-white rounded-md p-1 text-[8px] font-extrabold space-y-0.5 w-[75px] sm:w-[90px] max-h-28 overflow-y-auto shadow-lg border border-white/20 select-none scrollbar-thin scrollbar-thumb-white/20 hover:scale-105 transition-all">
+                            <div className="text-[7px] text-amber-400 font-mono scale-95 leading-none mb-0.5 border-b border-white/10 pb-0.5 text-center uppercase tracking-wider sticky top-0 bg-slate-950/90 py-0.5">
                               Suplentes
                             </div>
-                            {alts.slice(0, 2).map((alt) => (
+                            {alts.map((alt) => (
                               <div
                                 key={alt.id}
                                 onClick={(e) => {
@@ -1372,14 +1467,13 @@ export default function App() {
                                 className="truncate leading-normal px-1 py-0.5 rounded bg-white/10 hover:bg-red-600 hover:text-white transition-all text-center cursor-pointer font-bold border border-transparent hover:border-white/20"
                                 title={`Clique para colocar ${alt.name} como titular nesta posição`}
                               >
-                                {alt.number}. {alt.name.split(' ').pop()}
+                                {alt.number}. {(() => {
+                                  const parts = alt.name.trim().split(/\s+/);
+                                  if (parts.length <= 1) return alt.name;
+                                  return `${parts[0]} ${parts[parts.length - 1]}`;
+                                })()}
                               </div>
                             ))}
-                            {alts.length > 2 && (
-                              <div className="text-[6.5px] text-slate-300 text-center leading-none mt-0.5 font-normal">
-                                +{alts.length - 2} suplentes
-                              </div>
-                            )}
                           </div>
                         );
                       })()}
@@ -1697,15 +1791,15 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="col-span-1">
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Data de Nascimento</label>
                       <div className="relative">
                         <input
                           type="date"
                           value={formBirthDate}
                           onChange={(e) => setFormBirthDate(e.target.value)}
-                          className="bg-white border border-slate-200 text-slate-800 rounded p-1.5 w-full focus:outline-none focus:border-red-600 cursor-pointer text-xs font-sans"
+                          className="bg-white border border-slate-200 text-slate-800 rounded p-1.5 w-full focus:outline-none focus:border-red-650 cursor-pointer text-[11px] font-sans"
                         />
                         {formBirthDate && (() => {
                           const year = formBirthDate.substring(0, 4);
@@ -1716,8 +1810,8 @@ export default function App() {
                       </div>
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Classificação (Estrelas)</label>
-                      <div className="flex gap-1 items-center mt-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Avaliação</label>
+                      <div className="flex gap-1 items-center mt-2">
                         {[1, 2, 3, 4, 5].map((star) => (
                            <button
                             key={star}
@@ -1733,6 +1827,24 @@ export default function App() {
                           </button>
                         ))}
                       </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Prioridade</label>
+                      <select
+                        value={formPriority}
+                        onChange={(e) => setFormPriority(Number(e.target.value))}
+                        className="bg-white border border-slate-200 text-slate-850 rounded p-1.5 w-full focus:outline-none focus:border-red-600 cursor-pointer text-xs font-sans"
+                      >
+                        <option value={0}>Sem prioridade</option>
+                        <option value={1}>1ª Opção</option>
+                        <option value={2}>2ª Opção</option>
+                        <option value={3}>3ª Opção</option>
+                        <option value={4}>4ª Opção</option>
+                        <option value={5}>5ª Opção</option>
+                        <option value={6}>6ª Opção</option>
+                        <option value={7}>7ª Opção</option>
+                        <option value={8}>8ª Opção</option>
+                      </select>
                     </div>
                   </div>
 
@@ -1958,16 +2070,23 @@ export default function App() {
                             <span className="text-[10px] text-amber-500 font-bold flex items-center shrink-0">
                               ★{player.rating}
                             </span>
+                            {player.priority ? (
+                              <span className="text-[8.5px] bg-amber-500 text-white border border-amber-400 font-extrabold px-1.5 rounded inline-flex items-center leading-tight shadow-sm" title={`Prioridade Opção #${player.priority}`}>
+                                P{player.priority}
+                              </span>
+                            ) : null}
                           </div>
 
                           <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            {/* Specific Position label badge */}
+                            {player.position && (
+                              <span className="text-[8px] font-black px-1 rounded uppercase tracking-wider font-mono bg-red-50 border border-red-150 text-red-650">
+                                {player.position}
+                              </span>
+                            )}
+
                             {/* Sector label badge */}
-                            <span className={`text-[8px] font-bold px-1 rounded uppercase tracking-wider font-mono ${
-                              player.positionGroup === 'GK' ? 'bg-blue-50 text-blue-700 border border-blue-100' :
-                              player.positionGroup === 'DEF' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' :
-                              player.positionGroup === 'MID' ? 'bg-amber-50 text-amber-600 border border-amber-150' :
-                              'bg-rose-50 text-rose-705 border border-rose-150'
-                            }`}>
+                            <span className={`text-[8px] font-bold px-1 rounded uppercase tracking-wider font-mono bg-slate-50 text-slate-500 border border-slate-150`}>
                               {player.positionGroup}
                             </span>
 
@@ -2243,23 +2362,43 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Classificação Técnica</label>
-                    <div className="flex gap-1 items-center mt-1">
-                      {[1, 2, 3, 4, 5].map((star) => (
-                        <button
-                          key={star}
-                          type="button"
-                          onClick={() => setActivePlayer({ ...activePlayer, rating: star })}
-                          className="bg-transparent border-0 cursor-pointer"
-                        >
-                          <Star
-                            className={`h-4.5 w-4.5 ${
-                              star <= activePlayer.rating ? 'text-amber-400 fill-amber-400' : 'text-slate-300'
-                            }`}
-                          />
-                        </button>
-                      ))}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Classificação Técnica</label>
+                      <div className="flex gap-1 items-center mt-2">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <button
+                            key={star}
+                            type="button"
+                            onClick={() => setActivePlayer({ ...activePlayer, rating: star })}
+                            className="bg-transparent border-0 cursor-pointer"
+                          >
+                            <Star
+                              className={`h-4.5 w-4.5 ${
+                                star <= activePlayer.rating ? 'text-amber-400 fill-amber-400' : 'text-slate-300'
+                              }`}
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Prioridade na Posição</label>
+                      <select
+                        value={activePlayer.priority || 0}
+                        onChange={(e) => setActivePlayer({ ...activePlayer, priority: Number(e.target.value) })}
+                        className="bg-slate-50 text-slate-900 rounded p-1.5 w-full border border-slate-200 focus:outline-none focus:border-red-600 cursor-pointer text-xs font-sans"
+                      >
+                        <option value={0}>Sem prioridade</option>
+                        <option value={1}>1ª Opção</option>
+                        <option value={2}>2ª Opção</option>
+                        <option value={3}>3ª Opção</option>
+                        <option value={4}>4ª Opção</option>
+                        <option value={5}>5ª Opção</option>
+                        <option value={6}>6ª Opção</option>
+                        <option value={7}>7ª Opção</option>
+                        <option value={8}>8ª Opção</option>
+                      </select>
                     </div>
                   </div>
 
@@ -2365,8 +2504,13 @@ export default function App() {
                         
                         <div className="text-xs text-slate-500 font-medium mt-1">
                           Posição Principal: <strong className="text-slate-800 uppercase px-1.5 py-0.5 bg-red-50 border border-red-250 text-red-700 rounded text-[10px] font-mono">{activePlayer.position || 'MC'}</strong>
+                          {activePlayer.priority ? (
+                            <span className="ml-2.5 inline-flex items-center gap-1">
+                              Opção de Prioridade: <strong className="bg-amber-100 border border-amber-300 text-amber-800 rounded px-1.5 py-0.5 text-[10.5px] font-mono font-black animate-pulse-subtle">{activePlayer.priority}ª Opção</strong>
+                            </span>
+                          ) : null}
                           {(activePlayer.altPosition1 || activePlayer.altPosition2) && (
-                            <span className="ml-2">
+                            <span className="ml-2 block sm:inline mt-1 sm:mt-0">
                               Alternativas: {
                                 [activePlayer.altPosition1, activePlayer.altPosition2]
                                   .filter(Boolean)
